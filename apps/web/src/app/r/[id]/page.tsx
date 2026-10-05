@@ -8,11 +8,13 @@ import { DropLogo } from '@/components/DropLogo';
 import { 
   Users, Check, X, LogOut, Send, AlertCircle, 
   FileText, Copy, CheckCheck, Image as ImageIcon, 
-  FileCode, Archive, Music, Film, ShieldAlert
+  FileCode, Archive, Music, Film, ShieldAlert,
+  QrCode, Upload
 } from 'lucide-react';
 import { formatBytes } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
 import { API_URL } from '@/lib/config';
+import { QRCodeModal } from '@/components/QRCodeModal';
 
 function getFileIcon(filename: string) {
   const ext = filename.split('.').pop()?.toLowerCase();
@@ -74,9 +76,14 @@ export default function RoomPage({ params }: { params: { id: string } }) {
   const [hasRequested, setHasRequested] = useState(false);
   const [showParticipants, setShowParticipants] = useState(false);
   const [showEndModal, setShowEndModal] = useState(false);
+  const [showQRModal, setShowQRModal] = useState(false);
   const [messageInput, setMessageInput] = useState('');
   const [copied, setCopied] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  const [windowDragOver, setWindowDragOver] = useState(false);
+  const [droppedFiles, setDroppedFiles] = useState<File[] | null>(null);
+  const dragCounter = useRef(0);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const prevJoinReqCount = useRef(0);
@@ -126,10 +133,117 @@ export default function RoomPage({ params }: { params: { id: string } }) {
       if (e.key === 'Escape') {
         setShowParticipants(false);
         setShowEndModal(false);
+        setShowQRModal(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Global window drag and drop listener
+  useEffect(() => {
+    const handleDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter.current++;
+      if (e.dataTransfer?.types?.includes('Files')) {
+        setWindowDragOver(true);
+      }
+    };
+
+    const handleDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter.current--;
+      if (dragCounter.current <= 0) {
+        dragCounter.current = 0;
+        setWindowDragOver(false);
+      }
+    };
+
+    const handleDragOver = (e: DragEvent) => {
+      e.preventDefault();
+    };
+
+    const handleDrop = async (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter.current = 0;
+      setWindowDragOver(false);
+
+      if (!e.dataTransfer) return;
+      const items = Array.from(e.dataTransfer.items || []);
+      const extractedFiles: File[] = [];
+
+      async function traverseEntry(entry: any, path = ''): Promise<void> {
+        if (!entry) return;
+        if (entry.isFile) {
+          await new Promise<void>((resolve) => {
+            entry.file(
+              (file: File) => {
+                const relativeName = path ? `${path}/${file.name}` : file.name;
+                const tagged = new File([file], relativeName, {
+                  type: file.type,
+                  lastModified: file.lastModified,
+                });
+                extractedFiles.push(tagged);
+                resolve();
+              },
+              () => resolve()
+            );
+          });
+        } else if (entry.isDirectory) {
+          const dirReader = entry.createReader();
+          const readEntries = async (): Promise<any[]> => {
+            return new Promise((resolve) => {
+              const all: any[] = [];
+              function readBatch() {
+                dirReader.readEntries(
+                  (batch: any[]) => {
+                    if (batch.length === 0) {
+                      resolve(all);
+                    } else {
+                      all.push(...batch);
+                      readBatch();
+                    }
+                  },
+                  () => resolve(all)
+                );
+              }
+              readBatch();
+            });
+          };
+
+          const children = await readEntries();
+          const nextPath = path ? `${path}/${entry.name}` : entry.name;
+          for (const child of children) {
+            await traverseEntry(child, nextPath);
+          }
+        }
+      }
+
+      const entries = items.map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
+      if (entries.length > 0) {
+        for (const entry of entries) {
+          await traverseEntry(entry);
+        }
+      } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        extractedFiles.push(...Array.from(e.dataTransfer.files));
+      }
+
+      if (extractedFiles.length > 0) {
+        setDroppedFiles(extractedFiles);
+      }
+    };
+
+    window.addEventListener('dragenter', handleDragEnter);
+    window.addEventListener('dragleave', handleDragLeave);
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('drop', handleDrop);
+
+    return () => {
+      window.removeEventListener('dragenter', handleDragEnter);
+      window.removeEventListener('dragleave', handleDragLeave);
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('drop', handleDrop);
+    };
   }, []);
 
   const handleRequestJoin = (e: React.FormEvent) => {
@@ -318,13 +432,20 @@ export default function RoomPage({ params }: { params: { id: string } }) {
         
         {/* Top Header */}
         <header className="h-15 sm:h-16 flex items-center justify-between px-4 sm:px-6 border-b border-[var(--line)] bg-[var(--bg)]/90 backdrop-blur-md shrink-0 z-10">
-          <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
             <DropLogo size={20} className="w-5 h-5 shrink-0" />
             <h1 className="font-serif italic text-base tracking-tight truncate">DropXYZ</h1>
             <span className="text-xs text-[var(--line)] select-none">/</span>
-            <span className="text-xs font-mono text-[var(--muted)] font-medium tracking-wide">
-              {normalizedId}
-            </span>
+            <button
+              onClick={() => setShowQRModal(true)}
+              className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-[var(--surface)] hover:bg-[var(--hover)] border border-transparent hover:border-[var(--line)] transition-all cursor-pointer group"
+              title="Show QR code & room invite"
+            >
+              <span className="text-xs font-mono text-[var(--fg)] font-medium tracking-wide">
+                {normalizedId}
+              </span>
+              <QrCode className="w-3.5 h-3.5 text-[var(--faint)] group-hover:text-[var(--fg)] transition-colors" />
+            </button>
             {isAdmin && (
               <span className="px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider bg-[var(--surface)] text-[var(--faint)] rounded-md border border-[var(--line)] shrink-0">
                 Host
@@ -443,7 +564,13 @@ export default function RoomPage({ params }: { params: { id: string } }) {
         <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 sm:py-8 space-y-7">
           
           {/* File Upload Dropzone */}
-          <FileUpload roomId={normalizedId} sessionId={sessionId!} onUploadComplete={() => {}} />
+          <FileUpload 
+            roomId={normalizedId} 
+            sessionId={sessionId!} 
+            onUploadComplete={() => {}} 
+            externalFiles={droppedFiles}
+            onClearExternalFiles={() => setDroppedFiles(null)}
+          />
 
           {/* Files section */}
           {files.length > 0 && (
@@ -740,8 +867,30 @@ export default function RoomPage({ params }: { params: { id: string } }) {
             </div>
           </div>
         )}
+        {/* Full-screen Window Drag & Drop Overlay */}
+        {windowDragOver && (
+          <div className="fixed inset-0 z-50 flex flex-col items-center justify-center p-6 bg-[var(--bg)]/90 backdrop-blur-md border-4 border-dashed border-[var(--fg)] animate-settle pointer-events-none">
+            <div className="w-16 h-16 rounded-3xl bg-[var(--surface)] border border-[var(--line)] flex items-center justify-center mb-4 shadow-xl">
+              <Upload className="w-8 h-8 text-[var(--fg)] animate-bounce" />
+            </div>
+            <h2 className="font-serif italic text-3xl font-normal tracking-tight text-[var(--fg)] mb-2">
+              Drop files or folders to share
+            </h2>
+            <p className="text-sm text-[var(--muted)]">
+              Files will be immediately queued for upload to this room.
+            </p>
+          </div>
+        )}
+
+        {/* QR Code Modal Popup */}
+        <QRCodeModal
+          roomId={normalizedId}
+          isOpen={showQRModal}
+          onClose={() => setShowQRModal(false)}
+        />
 
       </div>
     </div>
   );
 }
+

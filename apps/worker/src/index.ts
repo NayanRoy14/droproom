@@ -55,8 +55,8 @@ export default {
           if (typeof size !== 'number' || size <= 0) {
             return new Response(JSON.stringify({ error: 'Invalid file size' }), { status: 400, headers: corsHeaders });
           }
-          if (size > 100 * 1024 * 1024) {
-            return new Response(JSON.stringify({ error: 'File too large (max 100 MB)' }), { status: 413, headers: corsHeaders });
+          if (size > 1024 * 1024 * 1024) {
+            return new Response(JSON.stringify({ error: 'File too large (max 1 GB)' }), { status: 413, headers: corsHeaders });
           }
 
           // Authorize via DO

@@ -11,21 +11,23 @@
     "test": "node --test src/lib/utils.test.ts"
   },
   "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "next": "^14.2.0",
+    "@droproom/shared": "*",
+    "@types/qrcode": "^1.5.6",
     "lucide-react": "^0.370.0",
-    "@droproom/shared": "*"
+    "next": "^14.2.0",
+    "qrcode": "^1.5.4",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
-    "typescript": "^5",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
-    "postcss": "^8",
-    "tailwindcss": "^3.4.1",
+    "autoprefixer": "^10.4.19",
     "eslint": "^8",
     "eslint-config-next": "14.2.0",
-    "autoprefixer": "^10.4.19"
+    "postcss": "^8",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5"
   }
 }

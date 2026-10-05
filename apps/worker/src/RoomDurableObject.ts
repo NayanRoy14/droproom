@@ -269,7 +269,7 @@ export class RoomDurableObject extends DurableObject {
         return new Response('Invalid object key for room', { status: 400 });
       }
 
-      if (typeof size !== 'number' || size <= 0 || size > 100 * 1024 * 1024) {
+      if (typeof size !== 'number' || size <= 0 || size > 1024 * 1024 * 1024) {
         return new Response('Invalid file size', { status: 400 });
       }
 

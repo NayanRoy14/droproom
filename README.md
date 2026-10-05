@@ -176,7 +176,8 @@ DropRoom offers **zero persistent residue** once a room concludes:
 
 ---
 
-## Limitations
-
-- **Maximum File Size**: 100 MB per file.
+- **Maximum File Size**: 1 GB per file.
+- **Batch & Folder Transfers**: Supports multi-file selection, whole folder recursive upload preserving structure, and window drag-and-drop.
+- **Fast Guest Joining**: Room code click triggers QR code modal for instant mobile camera joining.
 - **Ephemeral Storage**: All files and chat logs are destroyed permanently upon room termination.
+
