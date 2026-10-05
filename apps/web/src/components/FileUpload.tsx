@@ -41,16 +41,18 @@ export function FileUpload({
   const folderInputRef = useRef<HTMLInputElement>(null);
   const queueRef = useRef<UploadQueueItem[]>([]);
   queueRef.current = queue;
+  const startingRef = useRef<Set<string>>(new Set());
 
   const addFilesToQueue = useCallback((files: File[]) => {
     if (!files.length) return;
 
     const newItems: UploadQueueItem[] = files.map((file) => {
       const isOversized = file.size > MAX_FILE_SIZE;
+      const displayName = (file as any).webkitRelativePath || file.name;
       return {
         id: crypto.randomUUID(),
         file,
-        name: file.name,
+        name: displayName,
         size: file.size,
         progress: 0,
         status: isOversized ? 'error' : 'queued',
@@ -69,15 +71,10 @@ export function FileUpload({
     }
   }, [externalFiles, onClearExternalFiles, addFilesToQueue]);
 
-  const startUpload = useCallback(async (itemId: string) => {
+  const startUpload = useCallback(async (itemId: string, file: File, name: string) => {
     setQueue((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, status: 'uploading' } : item))
     );
-
-    const targetItem = queueRef.current.find((item) => item.id === itemId);
-    if (!targetItem) return;
-
-    const file = targetItem.file;
 
     try {
       const adminToken =
@@ -89,7 +86,7 @@ export function FileUpload({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          filename: file.name,
+          filename: name,
           size: file.size,
           mimeType: file.type || 'application/octet-stream',
           sessionId,
@@ -144,7 +141,7 @@ export function FileUpload({
         body: JSON.stringify({
           fileId,
           objectKey,
-          originalName: file.name,
+          originalName: name,
           size: file.size,
           mimeType: file.type || 'application/octet-stream',
           participantId: sessionId || (adminToken ? 'admin' : 'anonymous'),
@@ -172,18 +169,26 @@ export function FileUpload({
           )
         );
       }
+    } finally {
+      startingRef.current.delete(itemId);
     }
   }, [roomId, sessionId, onUploadComplete]);
 
   // Worker loop for concurrent uploads
   useEffect(() => {
     const activeUploads = queue.filter((item) => item.status === 'uploading');
-    const queuedItems = queue.filter((item) => item.status === 'queued');
+    const queuedItems = queue.filter(
+      (item) => item.status === 'queued' && !startingRef.current.has(item.id)
+    );
 
     // Run up to 2 uploads concurrently
-    if (activeUploads.length < 2 && queuedItems.length > 0) {
-      const nextItem = queuedItems[0];
-      startUpload(nextItem.id);
+    const availableSlots = 2 - activeUploads.length;
+    if (availableSlots > 0 && queuedItems.length > 0) {
+      const toStart = queuedItems.slice(0, availableSlots);
+      toStart.forEach((item) => {
+        startingRef.current.add(item.id);
+        startUpload(item.id, item.file, item.name);
+      });
     }
 
     // Check if entire non-empty batch just completed
@@ -191,7 +196,8 @@ export function FileUpload({
     if (
       nonErrorItems.length > 0 &&
       nonErrorItems.every((item) => item.status === 'completed') &&
-      activeUploads.length === 0
+      activeUploads.length === 0 &&
+      queuedItems.length === 0
     ) {
       const count = nonErrorItems.length;
       setJustCompletedCount(count);
@@ -204,6 +210,7 @@ export function FileUpload({
   }, [queue, startUpload]);
 
   const cancelUpload = (itemId: string) => {
+    startingRef.current.delete(itemId);
     const item = queueRef.current.find((x) => x.id === itemId);
     if (item?.xhr) {
       item.xhr.abort();
@@ -212,6 +219,7 @@ export function FileUpload({
   };
 
   const cancelAll = () => {
+    startingRef.current.clear();
     queueRef.current.forEach((item) => {
       if (item.xhr) item.xhr.abort();
     });
@@ -313,9 +321,7 @@ export function FileUpload({
       <input
         ref={folderInputRef}
         type="file"
-        // @ts-ignore
-        webkitdirectory=""
-        directory=""
+        {...({ webkitdirectory: '', directory: '' } as any)}
         multiple
         className="hidden"
         onChange={handleFileInput}
@@ -434,7 +440,11 @@ export function FileUpload({
         onDragLeave={() => setDragOver(false)}
         onDrop={handleDrop}
       >
-        <div className="w-10 h-10 rounded-2xl bg-[var(--surface)] border border-[var(--line)] flex items-center justify-center text-[var(--muted)] transition-all shadow-2xs">
+        <div 
+          onClick={() => fileInputRef.current?.click()}
+          className="w-10 h-10 rounded-2xl bg-[var(--surface)] border border-[var(--line)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--faint)] hover:scale-105 transition-all shadow-2xs cursor-pointer"
+          title="Browse files to upload"
+        >
           <Upload className={`w-4 h-4 transition-transform duration-200 ${dragOver ? '-translate-y-0.5 text-[var(--fg)]' : ''}`} />
         </div>
 

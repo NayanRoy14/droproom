@@ -119,7 +119,7 @@ export default {
           }));
 
           if (!authRes.ok) return new Response(await authRes.text(), { status: authRes.status, headers: corsHeaders });
-          const { objectKey } = await authRes.json() as any;
+          const { objectKey, originalName } = await authRes.json() as any;
 
           const aws = new AwsClient({
             accessKeyId: env.R2_ACCESS_KEY_ID,
@@ -130,6 +130,11 @@ export default {
 
           const r2Url = new URL(`https://${env.R2_BUCKET_NAME}.${env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com/${objectKey}`);
           r2Url.searchParams.set('X-Amz-Expires', '900'); // 15 minutes
+
+          // Enforce browser file attachment with clean leaf filename
+          const cleanDownloadName = (typeof originalName === 'string' ? originalName : objectKey.split('/').pop() || 'file')
+            .split(/[/\\]/).pop() || 'file';
+          r2Url.searchParams.set('response-content-disposition', `attachment; filename="${encodeURIComponent(cleanDownloadName)}"`);
           
           const signed = await aws.sign(new Request(r2Url.toString(), {
             method: 'GET'

@@ -220,11 +220,15 @@ export class RoomDurableObject extends DurableObject {
       if (!isAuth) return new Response('Unauthorized (participant)', { status: 403 });
 
       const filesInDb = this.ctx.storage.sql.exec('SELECT id FROM files').toArray();
-      const fileRow = this.ctx.storage.sql.exec('SELECT object_key FROM files WHERE id = ? LIMIT 1', fileId).toArray()[0];
+      const fileRow = this.ctx.storage.sql.exec('SELECT object_key, original_name FROM files WHERE id = ? LIMIT 1', fileId).toArray()[0];
       if (!fileRow) return new Response(`Not found. Searched for ${fileId}, DB has: ${JSON.stringify(filesInDb)}`, { status: 404 });
 
-      return new Response(JSON.stringify({ objectKey: fileRow.object_key }));
+      return new Response(JSON.stringify({ 
+        objectKey: fileRow.object_key,
+        originalName: fileRow.original_name
+      }));
     }
+
 
 
     if (request.method === 'POST' && url.pathname === '/file-complete') {
@@ -284,7 +288,7 @@ export class RoomDurableObject extends DurableObject {
         createdAt: Date.now()
       };
       
-      this.ctx.storage.sql.exec('INSERT INTO files (id, object_key, original_name, size, mime_type, uploader_id, uploader_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      this.ctx.storage.sql.exec('INSERT OR REPLACE INTO files (id, object_key, original_name, size, mime_type, uploader_id, uploader_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         file.id, file.objectKey, file.originalName, file.size, file.mimeType, file.uploaderId, file.uploaderName, file.createdAt);
         
       this.broadcast({ type: 'FILE_SHARED', payload: file });
@@ -309,7 +313,7 @@ export class RoomDurableObject extends DurableObject {
           if (!rawName || rawName.length > 32) return; // Must be between 1 and 32 characters
           
           const requestId = generateId();
-          this.ctx.storage.sql.exec('INSERT INTO join_requests (id, display_name, created_at) VALUES (?, ?, ?)',
+          this.ctx.storage.sql.exec('INSERT OR REPLACE INTO join_requests (id, display_name, created_at) VALUES (?, ?, ?)',
             requestId, rawName, Date.now());
           
           this.setSession(ws, { ...session, participantId: requestId });

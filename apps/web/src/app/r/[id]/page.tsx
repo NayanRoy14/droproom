@@ -134,24 +134,28 @@ export default function RoomPage({ params }: { params: { id: string } }) {
         setShowParticipants(false);
         setShowEndModal(false);
         setShowQRModal(false);
+        setWindowDragOver(false);
+        dragCounter.current = 0;
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Global window drag and drop listener
+  // Global window drag and drop listener (scoped to connected room)
   useEffect(() => {
     const handleDragEnter = (e: DragEvent) => {
       e.preventDefault();
+      if (!e.dataTransfer?.types?.includes('Files')) return;
       dragCounter.current++;
-      if (e.dataTransfer?.types?.includes('Files')) {
+      if (status === 'connected') {
         setWindowDragOver(true);
       }
     };
 
     const handleDragLeave = (e: DragEvent) => {
       e.preventDefault();
+      if (!e.dataTransfer?.types?.includes('Files')) return;
       dragCounter.current--;
       if (dragCounter.current <= 0) {
         dragCounter.current = 0;
@@ -161,6 +165,14 @@ export default function RoomPage({ params }: { params: { id: string } }) {
 
     const handleDragOver = (e: DragEvent) => {
       e.preventDefault();
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = status === 'connected' ? 'copy' : 'none';
+      }
+    };
+
+    const handleDragEnd = () => {
+      dragCounter.current = 0;
+      setWindowDragOver(false);
     };
 
     const handleDrop = async (e: DragEvent) => {
@@ -168,7 +180,7 @@ export default function RoomPage({ params }: { params: { id: string } }) {
       dragCounter.current = 0;
       setWindowDragOver(false);
 
-      if (!e.dataTransfer) return;
+      if (status !== 'connected' || !e.dataTransfer) return;
       const items = Array.from(e.dataTransfer.items || []);
       const extractedFiles: File[] = [];
 
@@ -236,15 +248,17 @@ export default function RoomPage({ params }: { params: { id: string } }) {
     window.addEventListener('dragenter', handleDragEnter);
     window.addEventListener('dragleave', handleDragLeave);
     window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('dragend', handleDragEnd);
     window.addEventListener('drop', handleDrop);
 
     return () => {
       window.removeEventListener('dragenter', handleDragEnter);
       window.removeEventListener('dragleave', handleDragLeave);
       window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('dragend', handleDragEnd);
       window.removeEventListener('drop', handleDrop);
     };
-  }, []);
+  }, [status]);
 
   const handleRequestJoin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -267,9 +281,10 @@ export default function RoomPage({ params }: { params: { id: string } }) {
       if (!res.ok) throw new Error('Download failed');
       const { downloadUrl } = await res.json();
       
+      const safeDownloadName = originalName.split(/[/\\]/).pop() || originalName;
       const a = document.createElement('a');
       a.href = downloadUrl;
-      a.download = originalName;
+      a.download = safeDownloadName;
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
       document.body.appendChild(a);

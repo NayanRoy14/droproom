@@ -23,6 +23,7 @@ export function QRCodeModal({ roomId, isOpen, onClose }: QRCodeModalProps) {
   useEffect(() => {
     if (!isOpen) return;
 
+    let cancelled = false;
     QRCode.toString(roomUrl, {
       type: 'svg',
       margin: 1.5,
@@ -31,11 +32,19 @@ export function QRCodeModal({ roomId, isOpen, onClose }: QRCodeModalProps) {
         dark: '#111210',
         light: '#ffffff'
       }
-    }, (err, svg) => {
-      if (!err && svg) {
-        setSvgContent(svg);
-      }
-    });
+    })
+      .then((svg) => {
+        if (!cancelled && svg) {
+          setSvgContent(svg);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to generate QR code', err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen, roomUrl]);
 
   useEffect(() => {
