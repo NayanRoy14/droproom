@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" fill="none">
+  <!-- Dark squircle background -->
+  <rect width="32" height="32" rx="8" fill="#111210"/>
+  <rect x="0.5" y="0.5" width="31" height="31" rx="7.5" stroke="#252623" stroke-width="1"/>
+  
+  <!-- 3D Room / XYZ axes -->
+  <path d="M8.5 13L16 17.2L23.5 13" stroke="#7a7c75" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M16 17.2V25" stroke="#7a7c75" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M8.5 13V20.8L16 25L23.5 20.8V13" stroke="#ecece7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- The Droplet entering the XYZ room -->
+  <path d="M16 4C16 4 12.2 8.2 12.2 10.6C12.2 12.7 13.9 14.4 16 14.4C18.1 14.4 19.8 12.7 19.8 10.6C19.8 8.2 16 4 16 4Z" fill="#8d9bff"/>
+</svg>

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" fill="none">
+  <!-- Obsidian squircle background with subtle border -->
+  <rect width="32" height="32" rx="7.5" fill="#111210"/>
+  <rect x="0.5" y="0.5" width="31" height="31" rx="7" stroke="#262723" stroke-width="1"/>
+  
+  <!-- Dimensional Prismatic Drop -->
+  <path 
+    d="M15.3 4.2 C15.3 4.2 8.6 12.2 8.6 17.8 C8.6 20.4 9.9 22.6 11.9 23.9 L15.3 16.5 Z" 
+    fill="#ecece7" 
+    fill-opacity="0.95"
+  />
+  <path 
+    d="M16.7 4.2 C16.7 4.2 23.4 12.2 23.4 17.8 C23.4 20.4 22.1 22.6 20.1 23.9 L16.7 16.5 Z" 
+    fill="#ecece7" 
+    fill-opacity="0.65"
+  />
+  <path 
+    d="M12.6 24.7 C13.6 25.3 14.8 25.7 16 25.7 C17.2 25.7 18.4 25.3 19.4 24.7 L16 17.7 Z" 
+    fill="#ecece7" 
+    fill-opacity="0.35"
+  />
+</svg>

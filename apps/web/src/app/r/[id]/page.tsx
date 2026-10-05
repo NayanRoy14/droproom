@@ -1,0 +1,747 @@
+"use client";
+
+import { useEffect, useState, useRef } from 'react';
+import { useRoom } from '@/lib/useRoom';
+import { FileUpload } from '@/components/FileUpload';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { DropLogo } from '@/components/DropLogo';
+import { 
+  Users, Check, X, LogOut, Send, AlertCircle, 
+  FileText, Copy, CheckCheck, Image as ImageIcon, 
+  FileCode, Archive, Music, Film, ShieldAlert
+} from 'lucide-react';
+import { formatBytes } from '@/lib/utils';
+import { useRouter } from 'next/navigation';
+import { API_URL } from '@/lib/config';
+
+function getFileIcon(filename: string) {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'jpg':
+    case 'jpeg':
+    case 'png':
+    case 'gif':
+    case 'webp':
+    case 'svg':
+      return <ImageIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />;
+    case 'mp4':
+    case 'mov':
+    case 'webm':
+      return <Film className="w-3.5 h-3.5 text-purple-500 shrink-0" />;
+    case 'mp3':
+    case 'wav':
+    case 'ogg':
+      return <Music className="w-3.5 h-3.5 text-pink-500 shrink-0" />;
+    case 'zip':
+    case 'tar':
+    case 'gz':
+    case '7z':
+    case 'rar':
+      return <Archive className="w-3.5 h-3.5 text-amber-500 shrink-0" />;
+    case 'js':
+    case 'ts':
+    case 'tsx':
+    case 'jsx':
+    case 'json':
+    case 'py':
+    case 'html':
+    case 'css':
+      return <FileCode className="w-3.5 h-3.5 text-emerald-500 shrink-0" />;
+    default:
+      return <FileText className="w-3.5 h-3.5 text-[var(--faint)] shrink-0" />;
+  }
+}
+
+function formatTime(timestamp: number) {
+  if (!timestamp) return '';
+  return new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+export default function RoomPage({ params }: { params: { id: string } }) {
+  const router = useRouter();
+  const normalizedId = (params.id || '').toLowerCase().trim();
+  
+  const [adminToken, setAdminToken] = useState<string | undefined>(() => {
+    if (typeof window === 'undefined') return undefined;
+    return localStorage.getItem(`dropxyz_admin_${normalizedId}`) ||
+           localStorage.getItem(`droproom_admin_${normalizedId}`) ||
+           localStorage.getItem(`dropxyz_admin_${params.id}`) ||
+           localStorage.getItem(`droproom_admin_${params.id}`) ||
+           undefined;
+  });
+
+  const [displayName, setDisplayName] = useState('');
+  const [hasRequested, setHasRequested] = useState(false);
+  const [showParticipants, setShowParticipants] = useState(false);
+  const [showEndModal, setShowEndModal] = useState(false);
+  const [messageInput, setMessageInput] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const prevJoinReqCount = useRef(0);
+  
+  useEffect(() => {
+    const storedToken = localStorage.getItem(`dropxyz_admin_${normalizedId}`) || 
+                        localStorage.getItem(`droproom_admin_${normalizedId}`) ||
+                        localStorage.getItem(`dropxyz_admin_${params.id}`) || 
+                        localStorage.getItem(`droproom_admin_${params.id}`);
+    if (storedToken && storedToken !== adminToken) setAdminToken(storedToken);
+  }, [normalizedId, params.id, adminToken]);
+
+  const {
+    status, rejectReason, room, participants, messages, files, joinRequests,
+    isAdmin, sessionId, sendEvent, approveJoin, rejectJoin, endRoom
+  } = useRoom(normalizedId, adminToken);
+
+  useEffect(() => {
+    if (isAdmin && joinRequests.length > prevJoinReqCount.current) {
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          const ctx = new AudioCtx();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.12);
+          gain.gain.setValueAtTime(0.08, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.35);
+        }
+      } catch (e) {}
+    }
+    prevJoinReqCount.current = joinRequests.length;
+  }, [joinRequests.length, isAdmin]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowParticipants(false);
+        setShowEndModal(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const handleRequestJoin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!displayName.trim()) return;
+    sendEvent({ type: 'JOIN_REQUEST', payload: { displayName: displayName.trim() } });
+    setHasRequested(true);
+  };
+
+  const handleDownload = async (fileId: string, originalName: string) => {
+    setDownloadingId(fileId);
+    try {
+      const res = await fetch(`${API_URL}/api/rooms/${normalizedId}/download-url/${encodeURIComponent(fileId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          sessionId: sessionId || (adminToken ? 'admin' : undefined), 
+          adminToken 
+        })
+      });
+      if (!res.ok) throw new Error('Download failed');
+      const { downloadUrl } = await res.json();
+      
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = originalName;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (e: any) {
+      alert(e.message || 'Failed to download file');
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  const copyLink = () => {
+    if (typeof window === 'undefined') return;
+    navigator.clipboard.writeText(window.location.href);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  // --- Status screens ---
+
+  if (status === 'connecting') {
+    return (
+      <div className="min-h-[100dvh] flex items-center justify-center p-6 bg-[var(--bg)] text-[var(--fg)]">
+        <div className="flex flex-col items-center gap-2.5 animate-settle">
+          <div className="w-4 h-4 border-2 border-[var(--fg)] border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs text-[var(--faint)]">Connecting…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === 'disconnected') {
+    return (
+      <div className="min-h-[100dvh] flex items-center justify-center p-6 bg-[var(--bg)] text-[var(--fg)]">
+        <div className="flex flex-col items-center gap-2 text-center animate-settle">
+          <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse-live" />
+          <p className="text-xs text-[var(--muted)]">Reconnecting…</p>
+        </div>
+      </div>
+    );
+  }
+  
+  if (status === 'ended') {
+    return (
+      <div className="min-h-[100dvh] flex flex-col items-center justify-center px-6 text-center animate-settle bg-[var(--bg)] text-[var(--fg)]">
+        <div className="w-full max-w-[380px] p-8 rounded-2xl border border-[var(--line)] bg-[var(--surface)]/30 text-center space-y-4 shadow-sm">
+          <div className="w-12 h-12 rounded-full bg-[var(--surface)] border border-[var(--line)] flex items-center justify-center mx-auto text-[var(--faint)]">
+            <DropLogo size={20} className="opacity-50" />
+          </div>
+          <div className="space-y-1.5">
+            <h2 className="font-serif italic text-3xl font-normal tracking-tight">Room closed</h2>
+            <p className="text-xs sm:text-sm text-[var(--muted)] leading-relaxed">
+              All files and messages in this room have been permanently destroyed.
+            </p>
+          </div>
+          <button 
+            onClick={() => router.push('/')} 
+            className="w-full h-11 bg-[var(--fg)] text-[var(--bg)] rounded-xl text-xs sm:text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all cursor-pointer shadow-xs"
+          >
+            Return to DropXYZ
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === 'rejected') {
+    return (
+      <div className="min-h-[100dvh] flex flex-col items-center justify-center px-6 text-center animate-settle bg-[var(--bg)] text-[var(--fg)]">
+        <div className="w-full max-w-[380px] p-8 rounded-2xl border border-[var(--line)] bg-[var(--surface)]/30 text-center space-y-4 shadow-sm">
+          <div className="w-12 h-12 rounded-full bg-[var(--danger-bg)] border border-[var(--danger-line)] flex items-center justify-center mx-auto text-[var(--danger)]">
+            <X className="w-5 h-5" />
+          </div>
+          <div className="space-y-1.5">
+            <h2 className="font-serif italic text-3xl font-normal tracking-tight">Access ended</h2>
+            <p className="text-xs sm:text-sm text-[var(--muted)] leading-relaxed">
+              {rejectReason || 'Access was declined by the room host.'}
+            </p>
+          </div>
+          <button 
+            onClick={() => router.push('/')} 
+            className="w-full h-11 bg-[var(--surface)] text-[var(--fg)] border border-[var(--line)] rounded-xl text-xs sm:text-sm font-medium hover:bg-[var(--hover)] transition-all cursor-pointer"
+          >
+            Back to Home
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!room) {
+    if (hasRequested) {
+      return (
+        <div className="min-h-[100dvh] flex flex-col items-center justify-center px-6 text-center animate-settle bg-[var(--bg)] text-[var(--fg)]">
+          <div className="w-full max-w-[380px] p-8 sm:p-10 rounded-2xl border border-[var(--line)] bg-[var(--surface)]/30 text-center space-y-4 shadow-sm">
+            <div className="relative w-12 h-12 mx-auto flex items-center justify-center">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--accent)] opacity-40"></span>
+              <div className="w-10 h-10 rounded-full bg-[var(--surface)] border border-[var(--line)] flex items-center justify-center relative z-10 text-[var(--accent)]">
+                <Users className="w-4.5 h-4.5" />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <span className="text-[10px] font-semibold text-[var(--faint)] uppercase tracking-widest font-mono">
+                Admission Request Sent
+              </span>
+              <h2 className="font-serif italic text-3xl font-normal tracking-tight">Waiting for Host</h2>
+              <p className="text-xs sm:text-sm text-[var(--muted)] leading-relaxed">
+                The host has been notified. You will automatically enter when admitted.
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-[100dvh] flex items-center justify-center px-6 py-10 animate-settle bg-[var(--bg)] text-[var(--fg)]">
+        <div className="w-full max-w-[380px] p-8 sm:p-9 rounded-2xl border border-[var(--line)] bg-[var(--surface)]/20 text-center space-y-6 shadow-sm">
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-center gap-2 mb-2">
+              <DropLogo size={20} className="w-5 h-5 shrink-0" />
+              <span className="font-serif italic text-sm text-[var(--muted)]">DropXYZ</span>
+            </div>
+            <h2 className="font-serif italic font-normal text-3xl sm:text-4xl tracking-tight">Join Room</h2>
+            <p className="text-xs sm:text-sm text-[var(--muted)]">Enter your name to request admission</p>
+          </div>
+          
+          <form onSubmit={handleRequestJoin} className="space-y-3">
+            <input
+              type="text"
+              placeholder="Your name or alias"
+              value={displayName}
+              onChange={e => setDisplayName(e.target.value)}
+              className="w-full h-12 px-4 bg-[var(--surface)]/70 hover:bg-[var(--surface)] focus:bg-[var(--bg)] rounded-xl text-sm placeholder:text-[var(--faint)] outline-none border border-[var(--line)] focus:border-[var(--fg)] transition-all text-center"
+              autoFocus
+              maxLength={32}
+              required
+            />
+            <button 
+              type="submit" 
+              disabled={!displayName.trim()} 
+              className="w-full h-12 bg-[var(--fg)] text-[var(--bg)] rounded-xl font-medium text-sm hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-30 cursor-pointer shadow-xs"
+            >
+              Request to join ↗
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Main Room View ---
+
+  const onlineCount = participants.filter(p => p.status === 'online').length;
+
+  return (
+    <div className="h-[100dvh] max-h-[100dvh] flex flex-col overflow-hidden bg-[var(--bg)] text-[var(--fg)]">
+      <div className="flex-1 flex flex-col max-w-[760px] mx-auto w-full relative h-full">
+        
+        {/* Top Header */}
+        <header className="h-15 sm:h-16 flex items-center justify-between px-4 sm:px-6 border-b border-[var(--line)] bg-[var(--bg)]/90 backdrop-blur-md shrink-0 z-10">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <DropLogo size={20} className="w-5 h-5 shrink-0" />
+            <h1 className="font-serif italic text-base tracking-tight truncate">DropXYZ</h1>
+            <span className="text-xs text-[var(--line)] select-none">/</span>
+            <span className="text-xs font-mono text-[var(--muted)] font-medium tracking-wide">
+              {normalizedId}
+            </span>
+            {isAdmin && (
+              <span className="px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider bg-[var(--surface)] text-[var(--faint)] rounded-md border border-[var(--line)] shrink-0">
+                Host
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <ThemeToggle />
+
+            {/* Quick copy invite button */}
+            <button
+              onClick={copyLink}
+              className="h-8.5 px-3 flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--hover)] rounded-xl border border-transparent hover:border-[var(--line)] transition-all cursor-pointer"
+              title="Copy room link"
+            >
+              {copied ? (
+                <>
+                  <CheckCheck className="w-3.5 h-3.5 text-[var(--success)] animate-pop-in" />
+                  <span className="text-xs text-[var(--success)] font-medium">Copied</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span className="text-xs hidden sm:inline">Invite</span>
+                </>
+              )}
+            </button>
+
+            {/* People drawer trigger */}
+            <button 
+              onClick={() => setShowParticipants(!showParticipants)}
+              className="h-8.5 px-3 flex items-center gap-1.5 text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--hover)] rounded-xl border border-transparent hover:border-[var(--line)] transition-all relative cursor-pointer"
+              title="Participants"
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span className="text-xs font-mono tabular-nums">{onlineCount}</span>
+              {(joinRequests.length > 0 && isAdmin) && (
+                <span className="absolute top-1.5 right-1.5 flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--accent)] opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-[var(--accent)]"></span>
+                </span>
+              )}
+            </button>
+
+            <div className="h-4 w-[1px] bg-[var(--line)] mx-0.5" />
+
+            {/* Exit Room button */}
+            {isAdmin ? (
+              <button 
+                onClick={() => setShowEndModal(true)}
+                className="h-8.5 px-3 flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--danger)] hover:bg-[var(--danger-bg)] rounded-xl border border-transparent hover:border-[var(--danger-line)] transition-all cursor-pointer"
+                title="End room for all"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline text-xs">End</span>
+              </button>
+            ) : (
+              <button 
+                onClick={() => {
+                  router.push('/');
+                }}
+                className="h-8.5 px-3 flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--danger)] hover:bg-[var(--danger-bg)] rounded-xl border border-transparent hover:border-[var(--danger-line)] transition-all cursor-pointer"
+                title="Leave room"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline text-xs">Exit</span>
+              </button>
+            )}
+          </div>
+        </header>
+
+        {/* Realtime Host Join Request Modal Popup */}
+        {isAdmin && joinRequests.length > 0 && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45 backdrop-blur-xs animate-settle">
+            <div className="w-full max-w-[380px] rounded-2xl bg-[var(--bg)] border border-[var(--line)] p-6 sm:p-7 shadow-2xl animate-pop-in text-center space-y-5">
+              <div className="w-12 h-12 rounded-full bg-[var(--surface)] border border-[var(--line)] flex items-center justify-center mx-auto text-[var(--fg)] relative">
+                <Users className="w-5 h-5" />
+                <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--accent)] opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-[var(--accent)]"></span>
+                </span>
+              </div>
+              
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--faint)] font-mono">
+                  Join request {joinRequests.length > 1 && `(1 of ${joinRequests.length})`}
+                </span>
+                <h3 className="font-serif italic text-3xl font-normal text-[var(--fg)] tracking-tight">
+                  {joinRequests[0].displayName}
+                </h3>
+                <p className="text-xs sm:text-sm text-[var(--muted)] leading-relaxed">
+                  Wants to join this room. Allow them to access shared files and chat?
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  onClick={() => rejectJoin(joinRequests[0].id)}
+                  className="flex-1 h-10 rounded-xl border border-[var(--line)] text-xs sm:text-sm font-medium text-[var(--muted)] hover:text-[var(--danger)] hover:bg-[var(--danger-bg)] active:scale-98 transition-all cursor-pointer"
+                >
+                  Decline
+                </button>
+                <button
+                  onClick={() => approveJoin(joinRequests[0].id)}
+                  className="flex-1 h-10 rounded-xl bg-[var(--fg)] text-[var(--bg)] text-xs sm:text-sm font-medium hover:opacity-90 active:scale-98 transition-all shadow-xs cursor-pointer"
+                >
+                  Admit ↗
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Main Activity Area */}
+        <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 sm:py-8 space-y-7">
+          
+          {/* File Upload Dropzone */}
+          <FileUpload roomId={normalizedId} sessionId={sessionId!} onUploadComplete={() => {}} />
+
+          {/* Files section */}
+          {files.length > 0 && (
+            <div className="space-y-2.5 animate-settle">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[11px] font-semibold uppercase tracking-widest text-[var(--faint)] font-mono">
+                  Shared Files ({files.length})
+                </span>
+                <span className="text-[11px] text-[var(--faint)] font-mono">
+                  {formatBytes(files.reduce((acc, f) => acc + f.size, 0))} total
+                </span>
+              </div>
+              
+              <div className="space-y-2">
+                {files.map(file => (
+                  <div 
+                    key={file.id} 
+                    className="group flex items-center justify-between gap-3 p-3 sm:p-3.5 rounded-2xl border border-[var(--line)]/80 bg-[var(--surface)]/30 hover:bg-[var(--surface)] hover:border-[var(--line)] transition-all"
+                  >
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <div className="w-9 h-9 rounded-xl bg-[var(--bg)] border border-[var(--line)] flex items-center justify-center shrink-0 shadow-2xs">
+                        {getFileIcon(file.originalName)}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="text-xs sm:text-sm font-medium text-[var(--fg)] truncate block" title={file.originalName}>
+                          {file.originalName}
+                        </span>
+                        <div className="flex items-center gap-2 text-[11px] text-[var(--faint)] font-mono mt-0.5">
+                          <span>{formatBytes(file.size)}</span>
+                          <span>·</span>
+                          <span className="truncate">{file.uploaderName}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={() => handleDownload(file.id, file.originalName)}
+                      disabled={downloadingId === file.id}
+                      className="h-8.5 px-3.5 rounded-xl bg-[var(--bg)] hover:bg-[var(--fg)] hover:text-[var(--bg)] border border-[var(--line)] text-xs font-medium transition-all shadow-2xs flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-50"
+                      title="Download file"
+                    >
+                      {downloadingId === file.id ? (
+                        <span className="text-xs animate-pulse">Downloading…</span>
+                      ) : (
+                        <span>Download ↓</span>
+                      )}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Messages section */}
+          {messages.length > 0 && (
+            <div className="space-y-3 pt-2 animate-settle">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[11px] font-semibold uppercase tracking-widest text-[var(--faint)] font-mono">
+                  Room Chat
+                </span>
+              </div>
+              <div className="space-y-3.5">
+                {messages.map(msg => {
+                  const isMe = msg.senderId === sessionId || (isAdmin && msg.senderId === 'admin');
+                  return (
+                    <div 
+                      key={msg.id} 
+                      className={`flex flex-col animate-settle ${isMe ? 'items-end' : 'items-start'}`}
+                    >
+                      <div className="flex items-center gap-2 px-1 mb-1">
+                        <span className="text-[11px] font-medium text-[var(--muted)]">{isMe ? 'You' : msg.senderName}</span>
+                        {msg.timestamp && (
+                          <span className="text-[10px] text-[var(--faint)] font-mono">· {formatTime(msg.timestamp)}</span>
+                        )}
+                      </div>
+                      <div className={`
+                        px-4 py-2.5 sm:py-3 text-xs sm:text-[13px] rounded-2xl max-w-[85%] sm:max-w-[72%] leading-relaxed break-words shadow-2xs
+                        ${isMe 
+                          ? 'bg-[var(--fg)] text-[var(--bg)] rounded-br-xs' 
+                          : 'bg-[var(--surface)] text-[var(--fg)] border border-[var(--line)] rounded-bl-xs'
+                        }
+                      `}>
+                        {msg.message}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Minimal empty state */}
+          {files.length === 0 && messages.length === 0 && (
+            <div className="py-14 sm:py-18 flex flex-col items-center justify-center text-center animate-settle border border-dashed border-[var(--line)]/70 rounded-2xl p-8 bg-[var(--surface)]/10">
+              <div className="w-10 h-10 rounded-2xl bg-[var(--surface)] border border-[var(--line)] flex items-center justify-center mb-3 text-[var(--faint)]">
+                <DropLogo size={18} className="opacity-40" />
+              </div>
+              <p className="font-serif italic text-base text-[var(--fg)]">Room is currently empty</p>
+              <p className="text-xs text-[var(--muted)] mt-1 max-w-xs leading-relaxed">
+                Drop a file above or write a message below to start collaborating.
+              </p>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Message Input Composer */}
+        <div className="p-4 sm:p-5 border-t border-[var(--line)] bg-[var(--bg)]/95 backdrop-blur-md shrink-0 z-10">
+          <form 
+            onSubmit={(e) => {
+              e.preventDefault();
+              const text = messageInput.trim() || (e.currentTarget.querySelector('input') as HTMLInputElement)?.value?.trim() || '';
+              if (!text) return;
+              sendEvent({ type: 'CHAT_SEND', payload: { message: text } });
+              setMessageInput('');
+            }}
+            className="flex items-center gap-2.5"
+          >
+            <input 
+              name="message"
+              type="text"
+              value={messageInput}
+              onChange={e => setMessageInput(e.target.value)}
+              placeholder="Write a message to room…"
+              className="flex-1 h-11 px-4 bg-[var(--surface)]/70 hover:bg-[var(--surface)] focus:bg-[var(--bg)] rounded-xl text-xs sm:text-sm placeholder:text-[var(--faint)] outline-none border border-[var(--line)] focus:border-[var(--fg)] transition-all"
+            />
+            <button 
+              type="submit" 
+              disabled={!messageInput.trim()}
+              className="h-11 px-4 sm:px-5 flex items-center justify-center gap-1.5 bg-[var(--fg)] text-[var(--bg)] rounded-xl text-xs sm:text-sm font-medium disabled:opacity-20 hover:opacity-90 active:scale-95 transition-all shrink-0 cursor-pointer shadow-xs"
+              title="Send message"
+            >
+              <span>Send</span>
+              <span className="text-xs opacity-70">↵</span>
+            </button>
+          </form>
+        </div>
+
+        {/* Participants Drawer */}
+        {showParticipants && (
+          <>
+            <div 
+              className="fixed inset-0 bg-black/25 dark:bg-black/50 backdrop-blur-xs z-30 transition-opacity animate-settle"
+              onClick={() => setShowParticipants(false)} 
+            />
+            <div className="absolute top-0 right-0 bottom-0 w-80 max-w-[85vw] bg-[var(--bg)] border-l border-[var(--line)] z-40 flex flex-col shadow-2xl animate-slide-in-right">
+              <div className="h-15 sm:h-16 px-5 flex items-center justify-between border-b border-[var(--line)] shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <Users className="w-4 h-4 text-[var(--faint)]" />
+                  <h3 className="font-serif italic text-base">People ({onlineCount})</h3>
+                </div>
+                <button 
+                  onClick={() => setShowParticipants(false)} 
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--faint)] hover:text-[var(--fg)] hover:bg-[var(--hover)] transition-all cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-5 space-y-6">
+                
+                {/* Join Requests */}
+                {isAdmin && joinRequests.length > 0 && (
+                  <div className="space-y-2 animate-settle">
+                    <span className="text-[10px] font-semibold text-[var(--faint)] uppercase tracking-widest font-mono px-1">
+                      Pending Requests ({joinRequests.length})
+                    </span>
+                    <div className="space-y-1.5">
+                      {joinRequests.map(req => (
+                        <div 
+                          key={req.id} 
+                          className="flex items-center justify-between gap-2.5 p-2.5 rounded-xl bg-[var(--surface)] border border-[var(--line)]"
+                        >
+                          <span className="text-xs font-medium truncate flex-1 pl-1">{req.displayName}</span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button 
+                              onClick={() => approveJoin(req.id)}
+                              className="w-7 h-7 flex items-center justify-center rounded-lg bg-[var(--fg)] text-[var(--bg)] hover:opacity-90 active:scale-95 transition-all text-xs cursor-pointer shadow-2xs"
+                              title="Admit to room"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button 
+                              onClick={() => rejectJoin(req.id)}
+                              className="w-7 h-7 flex items-center justify-center rounded-lg text-[var(--faint)] hover:text-[var(--danger)] hover:bg-[var(--hover)] active:scale-95 transition-all cursor-pointer"
+                              title="Decline request"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* People List */}
+                <div className="space-y-2">
+                  <span className="text-[10px] font-semibold text-[var(--faint)] uppercase tracking-widest font-mono px-1">
+                    In Room ({onlineCount})
+                  </span>
+                  <div className="space-y-1">
+                    {participants.map(p => {
+                      const isMe = isAdmin ? p.id === 'host' : p.id === sessionId;
+                      const isHostParticipant = p.id === 'host';
+                      return (
+                        <div 
+                          key={p.id} 
+                          className={`flex items-center gap-2.5 p-2 rounded-xl transition-all group ${isMe && isHostParticipant ? 'bg-[var(--surface)]/60' : 'hover:bg-[var(--hover)]'}`}
+                        >
+                          <span className={`w-2 h-2 rounded-full shrink-0 ${p.status === 'online' ? 'bg-emerald-500 animate-pulse-live' : 'bg-[var(--line)]'}`} />
+                          <span className="text-xs sm:text-[13px] truncate flex-1">
+                            {isMe ? 'You' : p.displayName}
+                            {isHostParticipant && <span className="text-[10px] text-[var(--faint)] font-mono ml-1">· Host</span>}
+                            {isMe && !isHostParticipant && <span className="text-[10px] text-[var(--faint)] font-mono ml-1">· You</span>}
+                            {p.status !== 'online' && <span className="text-[10px] text-[var(--faint)] font-mono ml-1">· Away</span>}
+                          </span>
+                          {isAdmin && !isHostParticipant && (
+                            <button 
+                              onClick={() => sendEvent({ type: 'REMOVE_PARTICIPANT', payload: { participantId: p.id } })}
+                              className="text-[10px] text-[var(--faint)] hover:text-[var(--danger)] opacity-0 group-hover:opacity-100 transition-all px-1.5 py-0.5 rounded hover:bg-[var(--danger-bg)] cursor-pointer"
+                              title="Remove from room"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Drawer footer */}
+              <div className="p-4 border-t border-[var(--line)] bg-[var(--surface)]/30 shrink-0">
+                <button
+                  onClick={copyLink}
+                  className="w-full h-9 flex items-center justify-center gap-2 text-xs font-medium rounded-xl bg-[var(--bg)] border border-[var(--line)] hover:border-[var(--fg)] active:scale-98 transition-all cursor-pointer shadow-2xs"
+                >
+                  {copied ? (
+                    <>
+                      <CheckCheck className="w-3.5 h-3.5 text-[var(--success)]" />
+                      <span>Link copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-[var(--faint)]" />
+                      <span>Copy room link ↗</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* End Room Confirmation Modal */}
+        {showEndModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-settle">
+            <div className="w-full max-w-[380px] rounded-2xl bg-[var(--bg)] border border-[var(--line)] p-6 sm:p-7 shadow-2xl animate-pop-in text-center space-y-4">
+              <div className="w-11 h-11 rounded-2xl bg-[var(--danger-bg)] border border-[var(--danger-line)] flex items-center justify-center mx-auto text-[var(--danger)]">
+                <ShieldAlert className="w-5 h-5" />
+              </div>
+              <div className="space-y-1.5">
+                <h3 className="font-serif italic text-2xl font-normal">End room?</h3>
+                <p className="text-xs sm:text-sm text-[var(--muted)] leading-relaxed">
+                  All participants will be disconnected immediately and all files will be permanently deleted.
+                </p>
+              </div>
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  onClick={() => setShowEndModal(false)}
+                  className="flex-1 h-10 rounded-xl border border-[var(--line)] text-xs sm:text-sm font-medium hover:bg-[var(--hover)] active:scale-98 transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setShowEndModal(false);
+                    if (typeof window !== 'undefined') {
+                      localStorage.removeItem(`dropxyz_admin_${normalizedId}`);
+                      localStorage.removeItem(`droproom_admin_${normalizedId}`);
+                      localStorage.removeItem(`dropxyz_admin_${params.id}`);
+                      localStorage.removeItem(`droproom_admin_${params.id}`);
+                    }
+                    await endRoom();
+                  }}
+                  className="flex-1 h-10 rounded-xl bg-[var(--danger)] hover:opacity-90 text-white text-xs sm:text-sm font-medium active:scale-98 transition-all cursor-pointer shadow-xs"
+                >
+                  End room
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,6 @@
+.next
+.wrangler
+node_modules
+.git
+.dev.vars
+.env*.local
