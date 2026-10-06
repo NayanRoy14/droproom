@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowRight, Link as LinkIcon, AlertCircle, X, Radio } from 'lucide-react';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { DropLogo } from '@/components/DropLogo';
+import { DropBrand } from '@/components/DropBrand';
 import { LocalRoomsModal } from '@/components/LocalRoomsModal';
 import { API_URL } from '@/lib/config';
 
@@ -48,10 +49,7 @@ export default function Home() {
       
       {/* Top Header */}
       <header className="w-full max-w-[480px] sm:max-w-[520px] mx-auto flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <DropLogo size={22} className="w-5.5 h-5.5 shrink-0" />
-          <span className="font-serif italic text-base tracking-tight">DropXYZ</span>
-        </div>
+        <DropBrand showLogo logoSize={22} className="text-base" />
         <ThemeToggle />
       </header>
 
@@ -59,9 +57,12 @@ export default function Home() {
       <div className="w-full max-w-[440px] mx-auto py-12 sm:py-16 animate-settle">
         
         <div className="text-center mb-10 sm:mb-12">
-          <h1 className="font-serif italic font-normal text-4xl sm:text-5xl tracking-tight mb-3">
-            DropXYZ
-          </h1>
+          <div className="mb-3 flex justify-center">
+            <DropBrand 
+              as="h1" 
+              className="text-4xl sm:text-5xl font-normal" 
+            />
+          </div>
           <p className="text-[var(--muted)] text-sm sm:text-[15px] leading-relaxed max-w-xs mx-auto">
             Temporary spaces for ephemeral files and real-time chat.
           </p>
