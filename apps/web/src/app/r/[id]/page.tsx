@@ -934,13 +934,21 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                     >
                       {/* Message Bubble Wrapper */}
                       <div className="relative max-w-[85%] sm:max-w-[70%] select-text">
-                        <div className={`
-                          relative px-3.5 py-2 text-[13.5px] leading-relaxed shadow-xs transition-colors
-                          ${isMe 
-                            ? 'bg-[var(--fg)] text-[var(--bg)] rounded-2xl rounded-tr-xs border border-[var(--fg)] dark:border-[#383a34]' 
-                            : 'bg-[var(--surface)] text-[var(--fg)] rounded-2xl rounded-tl-xs border border-[var(--line)] shadow-2xs'
-                          }
-                        `}>
+                        <div 
+                          onClick={(e) => {
+                            if (window.matchMedia('(hover: none)').matches) {
+                              e.stopPropagation();
+                              setActiveMenuMessageId(activeMenuMessageId === msg.id ? null : msg.id);
+                            }
+                          }}
+                          className={`
+                            relative px-3 py-1.5 sm:px-3.5 sm:py-2 text-[13.5px] leading-relaxed shadow-xs transition-colors
+                            ${isMe 
+                              ? 'bg-[var(--fg)] text-[var(--bg)] rounded-2xl rounded-tr-xs border border-[var(--fg)] dark:border-[#383a34]' 
+                              : 'bg-[var(--surface)] text-[var(--fg)] rounded-2xl rounded-tl-xs border border-[var(--line)] shadow-2xs'
+                            }
+                          `}
+                        >
                           {/* Sender Name for incoming group messages */}
                           {!isMe && (
                             <div className="text-[11px] font-semibold text-[var(--accent)] mb-1 leading-none select-none">
@@ -951,7 +959,10 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                           {/* Quoted Reply Header */}
                           {msg.replyTo && (
                             <div 
-                              onClick={() => handleScrollToItem(msg.replyTo!.id)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleScrollToItem(msg.replyTo!.id);
+                              }}
                               className={`mb-1.5 p-2 rounded-lg text-[11px] leading-snug cursor-pointer border-l-[3.5px] hover:opacity-85 transition-opacity select-none text-left ${
                                 isMe 
                                   ? 'bg-[var(--bg)]/15 border-[var(--bg)] text-[var(--bg)]' 
@@ -978,20 +989,22 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                             </div>
                           )}
 
-                          {/* Message Content & Timestamp */}
-                          <div className="break-words whitespace-pre-wrap pr-7">
-                            {msg.message}
+                          {/* Message Content & Timestamp (Snug, Flex-Flowing, Zero Dead Space) */}
+                          <div className="flex flex-wrap items-end gap-x-2.5 gap-y-1">
+                            <span className="break-words whitespace-pre-wrap flex-1 min-w-0">
+                              {msg.message}
+                            </span>
                             
                             {/* Bottom-right metadata (Time + Double Blue Checkmark) */}
-                            <span className={`float-right ml-2.5 mt-1 inline-flex items-center gap-1 text-[10px] select-none pointer-events-none tabular-nums font-mono leading-none ${
+                            <span className={`inline-flex items-center gap-1 text-[10px] select-none pointer-events-none tabular-nums font-mono leading-none shrink-0 self-end ml-auto pb-0.5 ${
                               isMe ? 'text-[var(--bg)]/70' : 'text-[var(--muted)]'
                             }`}>
                               {formatTime(msg.timestamp)}
-                              {isMe && <CheckCheck className="w-3.5 h-3.5 text-[var(--accent)]" />}
+                              {isMe && <CheckCheck className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />}
                             </span>
                           </div>
 
-                          {/* Hover Chevron Arrow */}
+                          {/* Hover Chevron Arrow (desktop hover or active menu) */}
                           <button
                             type="button"
                             onClick={(e) => {
@@ -1005,7 +1018,7 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                                 ? 'bg-[var(--bg)]/20 hover:bg-[var(--bg)]/35 text-[var(--bg)]' 
                                 : 'bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 text-[var(--fg)]'
                               }
-                              ${activeMenuMessageId === msg.id ? 'opacity-100 scale-105' : 'opacity-0 group-hover:opacity-100 max-sm:opacity-60'}
+                              ${activeMenuMessageId === msg.id ? 'opacity-100 scale-105' : 'opacity-0 group-hover:opacity-100 max-sm:hidden'}
                             `}
                             title="Message options"
                             aria-label="Message options"
