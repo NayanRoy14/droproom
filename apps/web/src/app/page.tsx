@@ -2,9 +2,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Link as LinkIcon, AlertCircle, X } from 'lucide-react';
+import { ArrowRight, Link as LinkIcon, AlertCircle, X, Radio } from 'lucide-react';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { DropLogo } from '@/components/DropLogo';
+import { LocalRoomsModal } from '@/components/LocalRoomsModal';
 import { API_URL } from '@/lib/config';
 
 export default function Home() {
@@ -12,6 +13,7 @@ export default function Home() {
   const [creating, setCreating] = useState(false);
   const [joinId, setJoinId] = useState('');
   const [error, setError] = useState('');
+  const [showLocalModal, setShowLocalModal] = useState(false);
 
   const createRoom = async () => {
     setCreating(true);
@@ -121,9 +123,29 @@ export default function Home() {
               Join ↗
             </button>
           </form>
+
+          {/* Discover Nearby Rooms on Local Network */}
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => setShowLocalModal(true)}
+              className="w-full h-11 flex items-center justify-center gap-2 bg-[var(--surface)] hover:bg-[var(--hover)] border border-[var(--line)] hover:border-[var(--fg)] text-[var(--fg)] rounded-xl text-xs sm:text-sm font-medium transition-all active:scale-[0.99] cursor-pointer shadow-2xs"
+            >
+              <Radio className="w-3.5 h-3.5 text-[var(--accent)]" />
+              <span>Discover Nearby Rooms</span>
+            </button>
+          </div>
         </div>
 
       </div>
+
+      {/* Local Rooms Discovery Modal */}
+      <LocalRoomsModal 
+        isOpen={showLocalModal} 
+        onClose={() => setShowLocalModal(false)}
+        onJoinRoom={id => router.push(`/r/${id}`)}
+        onCreateRoom={createRoom}
+      />
 
       {/* Refined Minimal Footer */}
       <footer className="w-full max-w-[480px] sm:max-w-[520px] mx-auto text-center py-4">

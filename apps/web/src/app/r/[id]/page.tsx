@@ -9,7 +9,8 @@ import {
   Users, Check, X, LogOut, Send, AlertCircle, 
   FileText, Copy, CheckCheck, Image as ImageIcon, 
   FileCode, Archive, Music, Film, ShieldAlert,
-  QrCode, Upload, Smile, Reply, Trash2, MessageSquare, Plus
+  QrCode, Upload, Smile, Reply, Trash2, MessageSquare, Plus,
+  ChevronDown
 } from 'lucide-react';
 import { formatBytes } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
@@ -17,12 +18,65 @@ import { API_URL } from '@/lib/config';
 import { QRCodeModal } from '@/components/QRCodeModal';
 import { ChatReference, ReactionSummary } from '@droproom/shared';
 
-const QUICK_EMOJIS = ['👍', '❤️', '🔥', '😂', '👏', '🎉'];
-const CHAT_EMOJIS = [
-  '👍', '❤️', '🔥', '😂', '👏', '🎉', '🚀', '👀',
-  '💯', '✨', '🙌', '💡', '🤝', '⚡️', '🎯', '💬',
-  '📁', '🔒', '⏱️', '✅', '👋', '🥳', '🤔', '🙏',
-  '😍', '🤩', '😎', '🫡', '💪', '🎈', '🍕', '☕️'
+const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+
+const WHATSAPP_EMOJI_CATEGORIES = [
+  {
+    id: 'popular',
+    name: 'Frequently Used',
+    icon: '🔥',
+    emojis: ['👍', '❤️', '😂', '🔥', '👏', '🎉', '🚀', '👀', '💯', '✨', '🙌', '💡', '🤝', '⚡️', '🎯', '💬', '🥹', '🫡', '😍', '🤩', '😎', '🙏', '💪', '🥳']
+  },
+  {
+    id: 'smileys',
+    name: 'Smileys & Emotions',
+    icon: '😀',
+    emojis: [
+      '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '🥲', '🥹', 
+      '☺️', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', 
+      '😗', '😙', '😚', '😋', '😛', '😝', '😜', '🤪', '🤨', '🧐', 
+      '🤓', '😎', '🥸', '🤩', '🥳', '😏', '😒', '😞', '😔', '😟', 
+      '😕', '🙁', '☹️', '😣', '😖', '😫', '😩', '🥺', '😢', '😭', 
+      '😤', '😠', '😡', '🤬', '🤯', '😳', '🥵', '🥶', '😱', '😨', 
+      '😰', '😥', '😓', '🤗', '🤔', '🫣', '🤭', '🫢', '🫡', '🤫', 
+      '🫠', '🤥', '😶', '😐', '😑', '😬', '🫨', '😯', '😦', '😧', 
+      '😮', '😲', '🥱', '😴', '🤤', '😪', '😵', '😵‍💫', '🤐', '🥴'
+    ]
+  },
+  {
+    id: 'gestures',
+    name: 'Gestures & People',
+    icon: '👍',
+    emojis: [
+      '👍', '👎', '👊', '✊', '🤛', '🤜', '👏', '🙌', '👐', '🤲', 
+      '🤝', '🙏', '✍️', '💅', '🤳', '💪', '🦾', '🦿', '🦵', '🦶', 
+      '👂', '🦻', '👃', '🫀', '🫁', '🧠', '🫱', '🫲', '🫳', '🫴', 
+      '🤌', '🤏', '✌️', '🤞', '🫰', '🤟', '🤘', '🤙', '👈', '👉', 
+      '👆', '🖕', '👇', '☝️', '🫵', '👋', '🤚', '🖐️', '✋', '🖖'
+    ]
+  },
+  {
+    id: 'hearts',
+    name: 'Hearts & Symbols',
+    icon: '❤️',
+    emojis: [
+      '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔', 
+      '❤️‍🔥', '❤️‍🩹', '❣️', '💕', '💞', '💓', '💗', '💖', '💘', '💝', 
+      '💟', '☮️', '✝️', '☪️', '🕉️', '⚡️', '🔥', '💥', '✨', '🌟', 
+      '💫', '⭐️', '🎯', '💯', '💢', '✅', '❌', '⚠️', '⛔️', '🚫'
+    ]
+  },
+  {
+    id: 'objects',
+    name: 'Objects & Food',
+    icon: '🎉',
+    emojis: [
+      '🎉', '🎊', '🎈', '🎂', '🎁', '🏆', '🥇', '🥈', '🥉', '⚽️', 
+      '🏀', '🏈', '⚾️', '🎾', '🎱', '🏓', '🏸', '📱', '💻', '📷', 
+      '📁', '🔒', '🔑', '⏱️', '☕️', '🍕', '🍔', '🍟', '🍿', '🍩', 
+      '🍦', '🍻', '🥂', '🍾', '🎧', '🎸', '🎨', '🚀', '✈️', '🏝️'
+    ]
+  }
 ];
 
 function getFileIcon(filename: string) {
@@ -92,7 +146,12 @@ export default function RoomPage({ params }: { params: { id: string } }) {
 
   const [replyingTo, setReplyingTo] = useState<ChatReference | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [activeEmojiCategory, setActiveEmojiCategory] = useState('popular');
   const [activeReactionPickerId, setActiveReactionPickerId] = useState<string | null>(null);
+  const [activeMenuMessageId, setActiveMenuMessageId] = useState<string | null>(null);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
+  const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
   const chatInputRef = useRef<HTMLInputElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
@@ -124,10 +183,13 @@ export default function RoomPage({ params }: { params: { id: string } }) {
   }, []);
 
   useEffect(() => {
-    if (!showEmojiPicker && !activeReactionPickerId) return;
+    if (!showEmojiPicker && !activeReactionPickerId && !activeMenuMessageId) return;
 
     const handlePointerDown = (e: MouseEvent | TouchEvent) => {
       const target = e.target as HTMLElement;
+      if (activeMenuMessageId && !target?.closest?.('.group')) {
+        setActiveMenuMessageId(null);
+      }
       if (activeReactionPickerId && !target?.closest?.('.reaction-picker-container')) {
         setActiveReactionPickerId(null);
       }
@@ -148,7 +210,7 @@ export default function RoomPage({ params }: { params: { id: string } }) {
       document.removeEventListener('mousedown', handlePointerDown);
       document.removeEventListener('touchstart', handlePointerDown);
     };
-  }, [activeReactionPickerId, showEmojiPicker]);
+  }, [activeReactionPickerId, showEmojiPicker, activeMenuMessageId]);
 
   const handleInsertEmoji = (emoji: string) => {
     if (chatInputRef.current) {
@@ -190,14 +252,34 @@ export default function RoomPage({ params }: { params: { id: string } }) {
     chatInputRef.current?.focus();
   };
 
+  const handleCopyMessageText = async (id: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedMessageId(id);
+      setTimeout(() => setCopiedMessageId(null), 1800);
+    } catch (e) {
+      console.error('Failed to copy text', e);
+    }
+    setActiveMenuMessageId(null);
+  };
+
+  const handleDeleteMessageWithAnim = (id: string) => {
+    setActiveMenuMessageId(null);
+    setDeletingMessageId(id);
+    setTimeout(() => {
+      deleteMessage(id);
+      setDeletingMessageId(null);
+    }, 280);
+  };
+
   const handleScrollToItem = (id: string) => {
     const el = document.getElementById(`item-${id}`);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      el.classList.add('ring-2', 'ring-[var(--accent)]');
+      setHighlightedItemId(id);
       setTimeout(() => {
-        el.classList.remove('ring-2', 'ring-[var(--accent)]');
-      }, 2000);
+        setHighlightedItemId(null);
+      }, 1600);
     }
   };
 
@@ -828,152 +910,217 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                 {messages.map(msg => {
                   const isMe = msg.senderId === sessionId || (isAdmin && (msg.senderId === 'host' || msg.senderId === 'admin'));
                   const canDelete = isMe && (currentTime - msg.timestamp <= 120_000);
+                  const isHighlighted = highlightedItemId === msg.id;
+                  const isDeleting = deletingMessageId === msg.id;
 
                   return (
                     <div 
                       id={`item-${msg.id}`}
                       key={msg.id} 
-                      className={`group flex flex-col animate-settle ${isMe ? 'items-end' : 'items-start'} transition-all rounded-xl`}
+                      className={`group relative flex flex-col mb-2.5 transition-all ${
+                        isMe ? 'items-end' : 'items-start'
+                      } ${isHighlighted ? 'animate-flash-highlight rounded-2xl' : ''} ${
+                        isDeleting ? 'animate-message-exit' : 'animate-message-enter'
+                      }`}
                     >
-                      <div className="flex items-center gap-2 px-1 mb-1">
-                        <span className="text-[11px] font-medium text-[var(--muted)]">{isMe ? 'You' : msg.senderName}</span>
-                        {msg.timestamp && (
-                          <span className="text-[10px] text-[var(--faint)] font-mono">· {formatTime(msg.timestamp)}</span>
-                        )}
-                      </div>
-
-                      <div className={`relative flex items-center gap-1.5 max-w-[85%] sm:max-w-[72%] ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
-                        {/* Message Bubble */}
+                      {/* WhatsApp Bubble Wrapper */}
+                      <div className="relative max-w-[85%] sm:max-w-[70%] select-text">
                         <div className={`
-                          px-4 py-2.5 sm:py-3 text-xs sm:text-[13px] rounded-2xl leading-relaxed break-words shadow-2xs
+                          relative px-3.5 py-2 text-[13.5px] leading-relaxed shadow-xs transition-colors
                           ${isMe 
-                            ? 'bg-[var(--fg)] text-[var(--bg)] rounded-br-xs' 
-                            : 'bg-[var(--surface)] text-[var(--fg)] border border-[var(--line)] rounded-bl-xs'
+                            ? 'bg-[#dcf8c6] dark:bg-[#005c4b]/85 text-[#111b21] dark:text-[#e9edef] rounded-2xl rounded-tr-xs border border-[#c4eab0] dark:border-[#005c4b]' 
+                            : 'bg-[#ffffff] dark:bg-[#202c33] text-[#111b21] dark:text-[#e9edef] rounded-2xl rounded-tl-xs border border-[#e2e2e2] dark:border-[#2a3942]'
                           }
                         `}>
-                          {/* Quote / Reply Tag Banner */}
-                          {msg.replyTo && (
-                            <div 
-                              onClick={() => handleScrollToItem(msg.replyTo!.id)}
-                              className={`
-                                mb-2 p-2 rounded-xl text-[11px] leading-snug cursor-pointer border transition-opacity hover:opacity-85 flex items-start gap-1.5
-                                ${isMe 
-                                  ? 'bg-black/15 text-[var(--bg)] border-white/20' 
-                                  : 'bg-[var(--hover)] text-[var(--fg)] border-[var(--line)]'
-                                }
-                              `}
-                              title="Click to view quoted item"
-                            >
-                              {msg.replyTo.type === 'file' ? (
-                                <FileText className="w-3.5 h-3.5 mt-0.5 shrink-0 opacity-70" />
-                              ) : (
-                                <Reply className="w-3.5 h-3.5 mt-0.5 shrink-0 opacity-70" />
-                              )}
-                              <div className="min-w-0 flex-1 truncate">
-                                <span className="font-semibold block truncate">
-                                  {msg.replyTo.type === 'file' ? '📁 ' : '↩ '}
-                                  {msg.replyTo.name}
-                                </span>
-                                <span className="opacity-80 block truncate font-normal text-[10px]">
-                                  {msg.replyTo.preview}
-                                </span>
-                              </div>
+                          {/* Sender Name for incoming group messages */}
+                          {!isMe && (
+                            <div className="text-[11px] font-semibold text-[#008069] dark:text-[#53bdeb] mb-1 leading-none select-none">
+                              {msg.senderName}
                             </div>
                           )}
 
-                          {msg.message}
-                        </div>
-
-                        {/* Hover Action Toolbar */}
-                        <div className={`
-                          opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex items-center gap-1
-                          ${isMe ? 'mr-1' : 'ml-1'}
-                        `}>
-                          {/* Reply / Tag button */}
-                          <button
-                            type="button"
-                            onClick={() => handleReplyMessage(msg)}
-                            className="w-6 h-6 rounded-lg bg-[var(--surface)] border border-[var(--line)] text-[var(--muted)] hover:text-[var(--fg)] hover:scale-105 transition-all flex items-center justify-center cursor-pointer shadow-2xs"
-                            title="Reply to message"
-                          >
-                            <Reply className="w-3 h-3" />
-                          </button>
-
-                          {/* Quick Reaction button */}
-                          <div className="relative reaction-picker-container">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setActiveReactionPickerId(activeReactionPickerId === msg.id ? null : msg.id);
-                              }}
-                              className="w-6 h-6 rounded-lg bg-[var(--surface)] border border-[var(--line)] text-[var(--muted)] hover:text-[var(--fg)] hover:scale-105 transition-all flex items-center justify-center cursor-pointer shadow-2xs"
-                              title="React"
+                          {/* WhatsApp Quoted Reply Header */}
+                          {msg.replyTo && (
+                            <div 
+                              onClick={() => handleScrollToItem(msg.replyTo!.id)}
+                              className="mb-1.5 p-2 rounded-lg text-[11px] leading-snug cursor-pointer bg-black/5 dark:bg-black/25 border-l-[3.5px] border-[#008069] dark:border-[#53bdeb] hover:opacity-85 transition-opacity select-none text-left"
+                              title="Click to jump to quoted item"
                             >
-                              <Smile className="w-3 h-3" />
-                            </button>
-                            {activeReactionPickerId === msg.id && (
-                              <div className={`
-                                absolute bottom-8 z-30 flex items-center gap-1 bg-[var(--bg)] border border-[var(--line)] shadow-xl rounded-full p-1 animate-pop-in
-                                ${isMe ? 'right-0' : 'left-0'}
-                              `}>
-                                {QUICK_EMOJIS.map(emoji => (
-                                  <button
-                                    key={emoji}
-                                    type="button"
-                                    onClick={() => {
-                                      toggleReaction(msg.id, 'message', emoji);
-                                      setActiveReactionPickerId(null);
-                                    }}
-                                    className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-[var(--hover)] hover:scale-120 transition-transform cursor-pointer text-sm"
-                                  >
-                                    {emoji}
-                                  </button>
-                                ))}
+                              <div className="flex items-center gap-1 font-semibold text-[#008069] dark:text-[#53bdeb] text-[11px]">
+                                {msg.replyTo.type === 'file' ? (
+                                  <>
+                                    <FileText className="w-3 h-3 shrink-0" />
+                                    <span>{msg.replyTo.name}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Reply className="w-3 h-3 shrink-0" />
+                                    <span>{msg.replyTo.name}</span>
+                                  </>
+                                )}
                               </div>
-                            )}
+                              <p className="text-[10px] text-[#667781] dark:text-[#8696a0] truncate mt-0.5 font-normal">
+                                {msg.replyTo.preview}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Message Content & Timestamp */}
+                          <div className="break-words whitespace-pre-wrap pr-4">
+                            {msg.message}
+                            
+                            {/* WhatsApp bottom-right metadata (Time + Double Blue Checkmark) */}
+                            <span className="float-right ml-2.5 mt-1 inline-flex items-center gap-1 text-[10px] text-[#667781] dark:text-[#8696a0] select-none pointer-events-none tabular-nums font-mono leading-none">
+                              {formatTime(msg.timestamp)}
+                              {isMe && <CheckCheck className="w-3.5 h-3.5 text-[#53bdeb]" />}
+                            </span>
                           </div>
 
-                          {/* Delete within 2 minutes button */}
-                          {canDelete && (
-                            <button
-                              type="button"
-                              onClick={() => deleteMessage(msg.id)}
-                              className="w-6 h-6 rounded-lg bg-[var(--surface)] border border-[var(--line)] text-[var(--faint)] hover:text-[var(--danger)] hover:bg-[var(--danger-bg)] hover:scale-105 transition-all flex items-center justify-center cursor-pointer shadow-2xs"
-                              title={`Delete (within 2 mins — ${Math.max(1, Math.ceil((120_000 - (currentTime - msg.timestamp)) / 1000))}s left)`}
+                          {/* WhatsApp Hover Chevron Arrow */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveMenuMessageId(activeMenuMessageId === msg.id ? null : msg.id);
+                            }}
+                            className={`
+                              absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded-full 
+                              bg-black/10 dark:bg-black/30 hover:bg-black/20 dark:hover:bg-white/20 
+                              text-[var(--fg)] transition-all cursor-pointer z-10
+                              ${activeMenuMessageId === msg.id ? 'opacity-100 bg-black/20' : 'opacity-0 group-hover:opacity-100 max-sm:opacity-60'}
+                            `}
+                            title="Message options"
+                            aria-label="Message options"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </button>
+
+                          {/* WhatsApp Message Context Menu Dropdown */}
+                          {activeMenuMessageId === msg.id && (
+                            <div 
+                              className={`
+                                absolute top-7 z-50 w-44 p-1.5 bg-[var(--bg)] border border-[var(--line)] 
+                                rounded-xl shadow-xl animate-pop-in space-y-0.5 text-xs text-[var(--fg)] select-none
+                                ${isMe ? 'right-0' : 'left-0 sm:left-auto sm:right-0'}
+                              `}
+                              onClick={e => e.stopPropagation()}
                             >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
+                              {/* Reply option */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleReplyMessage(msg);
+                                  setActiveMenuMessageId(null);
+                                }}
+                                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[var(--surface)] text-left cursor-pointer transition-colors"
+                              >
+                                <Reply className="w-3.5 h-3.5 text-[var(--accent)]" />
+                                <span>Reply</span>
+                              </button>
+
+                              {/* React option */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveReactionPickerId(activeReactionPickerId === msg.id ? null : msg.id);
+                                  setActiveMenuMessageId(null);
+                                }}
+                                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[var(--surface)] text-left cursor-pointer transition-colors"
+                              >
+                                <Smile className="w-3.5 h-3.5 text-amber-500" />
+                                <span>React with emoji</span>
+                              </button>
+
+                              {/* Copy option */}
+                              <button
+                                type="button"
+                                onClick={() => handleCopyMessageText(msg.id, msg.message)}
+                                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[var(--surface)] text-left cursor-pointer transition-colors"
+                              >
+                                {copiedMessageId === msg.id ? (
+                                  <>
+                                    <Check className="w-3.5 h-3.5 text-[var(--success)]" />
+                                    <span className="text-[var(--success)] font-medium">Copied!</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3.5 h-3.5 text-[var(--muted)]" />
+                                    <span>Copy text</span>
+                                  </>
+                                )}
+                              </button>
+
+                              {/* Delete option if author and within 2 mins */}
+                              {canDelete && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteMessageWithAnim(msg.id)}
+                                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[var(--danger)] hover:bg-[var(--danger-bg)] text-left cursor-pointer transition-colors border-t border-[var(--line)]/60 pt-1.5 mt-0.5"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 text-[var(--danger)]" />
+                                  <span>Delete for everyone</span>
+                                </button>
+                              )}
+                            </div>
                           )}
                         </div>
-                      </div>
 
-                      {/* Message Reaction Badges */}
-                      {msg.reactions && msg.reactions.length > 0 && (
-                        <div className={`flex flex-wrap items-center gap-1 mt-1.5 px-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
-                          {msg.reactions.map(r => {
-                            const hasReacted = sessionId ? r.userIds.includes(sessionId) || (isAdmin && r.userIds.includes('host')) : false;
-                            return (
+                        {/* Floating Reaction Quick Bar */}
+                        {activeReactionPickerId === msg.id && (
+                          <div 
+                            className={`
+                              absolute -top-10 z-40 flex items-center gap-1 bg-[var(--bg)] border border-[var(--line)] shadow-xl rounded-full p-1 animate-pop-in
+                              ${isMe ? 'right-0' : 'left-0'}
+                            `}
+                            onClick={e => e.stopPropagation()}
+                          >
+                            {QUICK_EMOJIS.map(emoji => (
                               <button
-                                key={r.emoji}
+                                key={emoji}
                                 type="button"
-                                onClick={() => toggleReaction(msg.id, 'message', r.emoji)}
-                                className={`
-                                  inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-mono border transition-all cursor-pointer
-                                  ${hasReacted 
-                                    ? 'bg-[var(--accent)]/15 border-[var(--accent)]/50 text-[var(--fg)] font-semibold shadow-2xs scale-[1.02]' 
-                                    : 'bg-[var(--surface)] border-[var(--line)] text-[var(--muted)] hover:border-[var(--faint)] hover:text-[var(--fg)]'
-                                  }
-                                `}
-                                title={`${r.count} reaction${r.count > 1 ? 's' : ''}${hasReacted ? ' (click to remove)' : ' (click to add)'}`}
+                                onClick={() => {
+                                  toggleReaction(msg.id, 'message', emoji);
+                                  setActiveReactionPickerId(null);
+                                }}
+                                className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-[var(--hover)] hover:scale-120 transition-transform cursor-pointer text-sm"
+                                title={emoji}
                               >
-                                <span>{r.emoji}</span>
-                                <span className="text-[10px] tabular-nums">{r.count}</span>
+                                {emoji}
                               </button>
-                            );
-                          })}
-                        </div>
-                      )}
+                            ))}
+                          </div>
+                        )}
+
+                        {/* WhatsApp Reaction Badges floating on bubble edge */}
+                        {msg.reactions && msg.reactions.length > 0 && (
+                          <div className={`
+                            absolute -bottom-2.5 z-20 flex flex-wrap items-center gap-1
+                            ${isMe ? 'right-2' : 'left-2'}
+                          `}>
+                            {msg.reactions.map(r => {
+                              const hasReacted = sessionId ? r.userIds.includes(sessionId) || (isAdmin && r.userIds.includes('host')) : false;
+                              return (
+                                <button
+                                  key={r.emoji}
+                                  type="button"
+                                  onClick={() => toggleReaction(msg.id, 'message', r.emoji)}
+                                  className={`
+                                    inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-mono border transition-all cursor-pointer shadow-2xs
+                                    ${hasReacted 
+                                      ? 'bg-[var(--bg)] border-[#008069] dark:border-[#53bdeb] text-[var(--fg)] font-semibold scale-105' 
+                                      : 'bg-[var(--bg)] border-[var(--line)] text-[var(--muted)] hover:border-[var(--faint)] hover:text-[var(--fg)]'
+                                    }
+                                  `}
+                                  title={`${r.count} reaction${r.count > 1 ? 's' : ''}${hasReacted ? ' (click to remove)' : ' (click to add)'}`}
+                                >
+                                  <span>{r.emoji}</span>
+                                  {r.count > 1 && <span className="text-[10px] tabular-nums font-semibold">{r.count}</span>}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -999,21 +1146,21 @@ export default function RoomPage({ params }: { params: { id: string } }) {
 
         {/* Message Input Composer */}
         <div className="p-4 sm:p-5 border-t border-[var(--line)] bg-[var(--bg)]/95 backdrop-blur-md shrink-0 z-10">
-          {/* Active Reply Banner */}
+          {/* Active Reply Banner (WhatsApp style with left accent bar) */}
           {replyingTo && (
-            <div className="flex items-center justify-between px-3 py-2 bg-[var(--surface)] border border-[var(--line)] rounded-xl mb-2.5 text-xs animate-pop-in shadow-2xs">
+            <div className="flex items-center justify-between px-3 py-2 bg-[var(--surface)] border-l-4 border-[#008069] dark:border-[#53bdeb] border-y border-r border-[var(--line)] rounded-r-xl mb-2.5 text-xs animate-pop-in shadow-2xs">
               <div className="flex items-center gap-2 min-w-0">
                 {replyingTo.type === 'file' ? (
-                  <FileText className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />
+                  <FileText className="w-3.5 h-3.5 text-[#008069] dark:text-[#53bdeb] shrink-0" />
                 ) : (
-                  <Reply className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />
+                  <Reply className="w-3.5 h-3.5 text-[#008069] dark:text-[#53bdeb] shrink-0" />
                 )}
                 <div className="truncate text-xs">
-                  <span className="font-semibold text-[var(--fg)]">
+                  <span className="font-semibold text-[#008069] dark:text-[#53bdeb]">
                     {replyingTo.type === 'file' ? 'Referencing file: ' : 'Replying to '}
                     {replyingTo.name}
                   </span>
-                  <span className="text-[var(--muted)] ml-1 font-normal">
+                  <span className="text-[var(--muted)] ml-1.5 font-normal">
                     · {replyingTo.preview}
                   </span>
                 </div>
@@ -1060,31 +1207,61 @@ export default function RoomPage({ params }: { params: { id: string } }) {
               {showEmojiPicker && (
                 <div 
                   ref={emojiPickerRef}
-                  className="absolute bottom-full mb-2 left-0 z-50 p-3 bg-[var(--bg)] border border-[var(--line)] rounded-2xl shadow-2xl w-72 max-w-[calc(100vw-2rem)] animate-pop-in"
+                  className="absolute bottom-full mb-2 left-0 z-50 bg-[var(--bg)] border border-[var(--line)] rounded-2xl shadow-2xl w-80 max-w-[calc(100vw-2rem)] animate-pop-in overflow-hidden"
                 >
-                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-[var(--line)]/60 text-[11px] font-mono text-[var(--faint)]">
-                    <span>Quick Emojis</span>
+                  {/* Top Header & Close */}
+                  <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[var(--line)]/60 text-xs font-medium text-[var(--fg)]">
+                    <div className="flex items-center gap-1.5">
+                      <Smile className="w-4 h-4 text-[#008069] dark:text-[#53bdeb]" />
+                      <span>WhatsApp Emojis</span>
+                    </div>
                     <button
                       type="button"
                       onClick={() => setShowEmojiPicker(false)}
-                      className="w-5 h-5 flex items-center justify-center rounded hover:text-[var(--fg)] hover:bg-[var(--hover)] transition-colors cursor-pointer"
-                      title="Close emoji picker"
+                      className="w-5 h-5 flex items-center justify-center rounded-md hover:text-[var(--fg)] hover:bg-[var(--hover)] transition-colors cursor-pointer text-[var(--faint)]"
+                      title="Close"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
-                  <div className="grid grid-cols-8 gap-1">
-                    {CHAT_EMOJIS.map(emoji => (
+
+                  {/* WhatsApp Category Tabs */}
+                  <div className="flex items-center justify-around px-2 py-1.5 border-b border-[var(--line)]/50 bg-[var(--surface)]/40 text-base">
+                    {WHATSAPP_EMOJI_CATEGORIES.map(cat => (
                       <button
-                        key={emoji}
+                        key={cat.id}
                         type="button"
-                        onClick={() => handleInsertEmoji(emoji)}
-                        className="w-7 h-7 flex items-center justify-center text-sm rounded-lg hover:bg-[var(--hover)] hover:scale-120 active:scale-95 transition-transform cursor-pointer"
-                        title={emoji}
+                        onClick={() => setActiveEmojiCategory(cat.id)}
+                        className={`h-7 w-8 flex items-center justify-center rounded-lg transition-all cursor-pointer ${
+                          activeEmojiCategory === cat.id 
+                            ? 'bg-[var(--bg)] border border-[var(--line)] shadow-2xs scale-110' 
+                            : 'opacity-60 hover:opacity-100'
+                        }`}
+                        title={cat.name}
                       >
-                        {emoji}
+                        {cat.icon}
                       </button>
                     ))}
+                  </div>
+
+                  {/* Emojis Grid */}
+                  <div className="p-3 max-h-56 overflow-y-auto">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--faint)] mb-2 px-1">
+                      {WHATSAPP_EMOJI_CATEGORIES.find(c => c.id === activeEmojiCategory)?.name}
+                    </div>
+                    <div className="grid grid-cols-8 gap-1">
+                      {WHATSAPP_EMOJI_CATEGORIES.find(c => c.id === activeEmojiCategory)?.emojis.map(emoji => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          onClick={() => handleInsertEmoji(emoji)}
+                          className="w-7 h-7 flex items-center justify-center text-sm rounded-lg hover:bg-[var(--hover)] hover:scale-120 active:scale-95 transition-transform cursor-pointer"
+                          title={emoji}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}

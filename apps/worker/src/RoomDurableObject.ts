@@ -190,6 +190,65 @@ export class RoomDurableObject extends DurableObject {
       }
     }
 
+    if (url.pathname.startsWith('/global-discovery/')) {
+      this.ctx.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS discoverable_rooms (
+          room_id TEXT PRIMARY KEY,
+          client_ip TEXT,
+          ip_subnet TEXT,
+          created_at INTEGER,
+          last_active INTEGER,
+          status TEXT DEFAULT 'active'
+        );
+      `);
+
+      if (url.pathname === '/global-discovery/register' && request.method === 'POST') {
+        const { roomId, clientIp, ipSubnet } = (await request.json().catch(() => ({}))) as any;
+        const now = Date.now();
+        this.ctx.storage.sql.exec(
+          "INSERT OR REPLACE INTO discoverable_rooms (room_id, client_ip, ip_subnet, created_at, last_active, status) VALUES (?, ?, ?, ?, ?, 'active')",
+          roomId, clientIp || '', ipSubnet || '', now, now
+        );
+        return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
+      }
+
+      if (url.pathname === '/global-discovery/deregister' && request.method === 'POST') {
+        const { roomId } = (await request.json().catch(() => ({}))) as any;
+        this.ctx.storage.sql.exec("DELETE FROM discoverable_rooms WHERE room_id = ?", roomId);
+        return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
+      }
+
+      if (url.pathname === '/global-discovery/list' && request.method === 'GET') {
+        const now = Date.now();
+        // Prune older than 2 hours
+        this.ctx.storage.sql.exec("DELETE FROM discoverable_rooms WHERE created_at < ? OR status != 'active'", now - 2 * 60 * 60 * 1000);
+
+        const targetIp = url.searchParams.get('ip') || '';
+        const targetSubnet = url.searchParams.get('subnet') || '';
+
+        const rows = this.ctx.storage.sql.exec(`
+          SELECT room_id, created_at,
+            CASE 
+              WHEN client_ip = ? THEN 2
+              WHEN ip_subnet = ? AND ip_subnet != '' THEN 1
+              ELSE 0
+            END as locality_score
+          FROM discoverable_rooms
+          WHERE status = 'active'
+          ORDER BY locality_score DESC, created_at DESC
+          LIMIT 15
+        `, targetIp, targetSubnet).toArray();
+
+        return new Response(JSON.stringify({
+          rooms: rows.map(r => ({
+            roomId: r.room_id,
+            createdAt: r.created_at,
+            isLocal: Number(r.locality_score) > 0
+          }))
+        }), { headers: { 'Content-Type': 'application/json' } });
+      }
+    }
+
     if (request.method === 'POST' && url.pathname === '/init') {
       const { roomId, adminToken } = await request.json() as any;
       this.roomId = roomId;
@@ -226,7 +285,14 @@ export class RoomDurableObject extends DurableObject {
           headers: { 'Content-Type': 'application/json' }
         });
       }
-      return new Response(JSON.stringify({ status: roomRow.status, roomId: roomRow.id, createdAt: roomRow.created_at }), {
+      const participantCountRow = this.ctx.storage.sql.exec("SELECT COUNT(*) as count FROM participants WHERE status = 'online'").toArray()[0];
+      const participantCount = Math.max(1, Number(participantCountRow?.count || 1));
+      return new Response(JSON.stringify({ 
+        status: roomRow.status, 
+        roomId: roomRow.id, 
+        createdAt: roomRow.created_at,
+        participantCount
+      }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
       });
@@ -785,6 +851,16 @@ export class RoomDurableObject extends DurableObject {
     this.ctx.storage.sql.exec('DELETE FROM files');
     this.ctx.storage.sql.exec('DELETE FROM reactions');
     this.cleanupAlarmSet = false;
+
+    try {
+      const globalId = this.env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
+      const globalDO = this.env.ROOM_DO.get(globalId);
+      await globalDO.fetch(new Request('http://do/global-discovery/deregister', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: this.roomId })
+      }));
+    } catch (e) {}
   }
 
   private scheduleCleanup() {

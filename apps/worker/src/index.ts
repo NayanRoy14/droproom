@@ -27,6 +27,21 @@ export default {
         });
       }
 
+      if (request.method === 'GET' && url.pathname === '/api/rooms/local') {
+        const clientIp = request.headers.get('cf-connecting-ip') || 
+                         request.headers.get('x-real-ip') || 
+                         request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 
+                         '127.0.0.1';
+        const ipSubnet = getIpSubnet(clientIp);
+        const globalId = env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
+        const globalDO = env.ROOM_DO.get(globalId);
+        const listRes = await globalDO.fetch(new Request(`http://do/global-discovery/list?ip=${encodeURIComponent(clientIp)}&subnet=${encodeURIComponent(ipSubnet)}`));
+        return new Response(listRes.body, {
+          status: listRes.status,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
       if (request.method === 'POST' && url.pathname === '/api/rooms') {
         const roomId = generateRoomCode(4);
         const adminToken = generateRandomString(32);
@@ -41,6 +56,24 @@ export default {
         }));
         
         if (!res.ok) throw new Error('Failed to init room');
+
+        const clientIp = request.headers.get('cf-connecting-ip') || 
+                         request.headers.get('x-real-ip') || 
+                         request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 
+                         '127.0.0.1';
+        const ipSubnet = getIpSubnet(clientIp);
+
+        try {
+          const globalId = env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
+          const globalDO = env.ROOM_DO.get(globalId);
+          await globalDO.fetch(new Request('http://do/global-discovery/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ roomId, clientIp, ipSubnet })
+          }));
+        } catch (e) {
+          console.error('Failed to register discoverable room', e);
+        }
 
         return new Response(JSON.stringify({ roomId, adminToken }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -263,4 +296,17 @@ function generateRandomString(length: number) {
     result += chars[randomArray[i] % chars.length];
   }
   return result;
+}
+
+function getIpSubnet(ip: string): string {
+  if (!ip) return '';
+  if (ip.includes(':')) {
+    const parts = ip.split(':');
+    return parts.slice(0, 4).join(':');
+  }
+  const parts = ip.split('.');
+  if (parts.length >= 3) {
+    return parts.slice(0, 3).join('.');
+  }
+  return ip;
 }
