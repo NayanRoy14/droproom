@@ -631,18 +631,19 @@ export default function RoomPage({ params }: { params: { id: string } }) {
       <div className="flex-1 flex flex-col max-w-[760px] mx-auto w-full relative h-full">
         
         {/* Top Header */}
-        <header className="h-15 sm:h-16 flex items-center justify-between px-4 sm:px-6 border-b border-[var(--line)] bg-[var(--bg)]/90 backdrop-blur-md shrink-0 z-10">
-          <div className="flex items-center gap-2 min-w-0">
+        <header className="h-15 sm:h-16 flex items-center justify-between px-3 sm:px-6 border-b border-[var(--line)] bg-[var(--bg)]/90 backdrop-blur-md shrink-0 z-10">
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 shrink-0">
             <DropBrand 
               showLogo 
               logoSize={20} 
               className="text-base" 
+              hideTextOnMobile
               onClick={() => router.push('/')} 
             />
-            <span className="text-xs text-[var(--line)] select-none">/</span>
+            <span className="hidden sm:inline text-xs text-[var(--line)] select-none">/</span>
             <button
               onClick={() => setShowQRModal(true)}
-              className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-[var(--surface)] hover:bg-[var(--hover)] border border-transparent hover:border-[var(--line)] transition-all cursor-pointer group"
+              className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-[var(--surface)] hover:bg-[var(--hover)] border border-transparent hover:border-[var(--line)] transition-all cursor-pointer group shrink-0"
               title="Show QR code & room invite"
             >
               <span className="text-xs font-mono text-[var(--fg)] font-medium tracking-wide">
@@ -651,25 +652,25 @@ export default function RoomPage({ params }: { params: { id: string } }) {
               <QrCode className="w-3.5 h-3.5 text-[var(--faint)] group-hover:text-[var(--fg)] transition-colors" />
             </button>
             {isAdmin && (
-              <span className="px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider bg-[var(--surface)] text-[var(--faint)] rounded-md border border-[var(--line)] shrink-0">
+              <span className="px-1.5 sm:px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider bg-[var(--surface)] text-[var(--faint)] rounded-md border border-[var(--line)] shrink-0">
                 Host
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             <ThemeToggle />
 
             {/* Quick copy invite button */}
             <button
               onClick={copyLink}
-              className="h-8.5 px-3 flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--hover)] rounded-xl border border-transparent hover:border-[var(--line)] transition-all cursor-pointer"
+              className="h-8.5 px-2 sm:px-3 flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--hover)] rounded-xl border border-transparent hover:border-[var(--line)] transition-all cursor-pointer"
               title="Copy room link"
             >
               {copied ? (
                 <>
                   <CheckCheck className="w-3.5 h-3.5 text-[var(--success)] animate-pop-in" />
-                  <span className="text-xs text-[var(--success)] font-medium">Copied</span>
+                  <span className="text-xs text-[var(--success)] font-medium hidden sm:inline">Copied</span>
                 </>
               ) : (
                 <>
@@ -682,7 +683,7 @@ export default function RoomPage({ params }: { params: { id: string } }) {
             {/* People drawer trigger */}
             <button 
               onClick={() => setShowParticipants(!showParticipants)}
-              className="h-8.5 px-3 flex items-center gap-1.5 text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--hover)] rounded-xl border border-transparent hover:border-[var(--line)] transition-all relative cursor-pointer"
+              className="h-8.5 px-2 sm:px-3 flex items-center gap-1.5 text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--hover)] rounded-xl border border-transparent hover:border-[var(--line)] transition-all relative cursor-pointer"
               title="Participants"
             >
               <Users className="w-3.5 h-3.5" />
@@ -695,13 +696,13 @@ export default function RoomPage({ params }: { params: { id: string } }) {
               )}
             </button>
 
-            <div className="h-4 w-[1px] bg-[var(--line)] mx-0.5" />
+            <div className="h-4 w-[1px] bg-[var(--line)] mx-0.5 hidden xs:block" />
 
             {/* Exit Room button */}
             {isAdmin ? (
               <button 
                 onClick={() => setShowEndModal(true)}
-                className="h-8.5 px-3 flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--danger)] hover:bg-[var(--danger-bg)] rounded-xl border border-transparent hover:border-[var(--danger-line)] transition-all cursor-pointer"
+                className="h-8.5 px-2 sm:px-3 flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--danger)] hover:bg-[var(--danger-bg)] rounded-xl border border-transparent hover:border-[var(--danger-line)] transition-all cursor-pointer"
                 title="End room for all"
               >
                 <LogOut className="w-3.5 h-3.5" />
@@ -712,7 +713,7 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                 onClick={() => {
                   router.push('/');
                 }}
-                className="h-8.5 px-3 flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--danger)] hover:bg-[var(--danger-bg)] rounded-xl border border-transparent hover:border-[var(--danger-line)] transition-all cursor-pointer"
+                className="h-8.5 px-2 sm:px-3 flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--danger)] hover:bg-[var(--danger-bg)] rounded-xl border border-transparent hover:border-[var(--danger-line)] transition-all cursor-pointer"
                 title="Leave room"
               >
                 <LogOut className="w-3.5 h-3.5" />

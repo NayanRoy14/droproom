@@ -19,7 +19,7 @@
   --success-line: #dcfce7;
 
   --sans: var(--font-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --serif: var(--font-serif), Georgia, serif;
+  --serif: var(--font-serif, "Source Serif 4"), Georgia, serif;
   --mono: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
@@ -80,7 +80,7 @@ body {
 }
 
 .font-serif {
-  font-family: var(--serif);
+  font-family: var(--font-serif, "Source Serif 4"), Georgia, "Times New Roman", serif;
   font-feature-settings: "kern" 1, "liga" 1;
 }
 

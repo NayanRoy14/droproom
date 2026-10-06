@@ -111,7 +111,7 @@ export default function Home() {
             <LinkIcon className="absolute left-4 w-4 h-4 text-[var(--faint)] pointer-events-none" />
             <input 
               type="text" 
-              placeholder="Enter 4-character code or link" 
+              placeholder="Room code or link" 
               value={joinId}
               onChange={e => setJoinId(e.target.value)}
               className="w-full h-12 pl-11 pr-24 bg-[var(--surface)]/70 hover:bg-[var(--surface)] focus:bg-[var(--bg)] rounded-xl text-sm placeholder:text-[var(--faint)] outline-none border border-[var(--line)] focus:border-[var(--fg)] transition-all"

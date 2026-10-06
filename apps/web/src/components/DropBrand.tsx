@@ -9,12 +9,13 @@ interface DropBrandProps {
   showLogo?: boolean;
   logoSize?: number;
   interactive?: boolean;
+  hideTextOnMobile?: boolean;
   onClick?: () => void;
 }
 
 const GLYPH_CYCLES: string[][] = [
   ['α', 'β', 'γ'], // Alpha, Beta, Gamma (Greek)
-  ['λ', 'μ', 'ν'], // Lambda, Mu, Nu
+  ['λ', 'μ', 'ν'], // Lambda, Nu, Mu
   ['1', '2', '3'], // Numbers
   ['✦', '▲', '●'], // Geometric symbols
   ['∞', '≈', '∆'], // Math operators
@@ -32,12 +33,15 @@ export function DropBrand({
   showLogo = false,
   logoSize = 20,
   interactive = true,
+  hideTextOnMobile = false,
   onClick,
 }: DropBrandProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [letters, setLetters] = useState<[string, string, string]>(['X', 'Y', 'Z']);
   const [isAnimating, setIsAnimating] = useState(false);
   const intervalRef = useRef<any>(null);
+  const settleRef = useRef<any>(null);
+  const touchTimerRef = useRef<any>(null);
   const frameCount = useRef(0);
 
   const startAnimation = () => {
@@ -46,6 +50,10 @@ export function DropBrand({
     setIsAnimating(true);
     frameCount.current = 0;
 
+    if (settleRef.current) {
+      clearInterval(settleRef.current);
+      settleRef.current = null;
+    }
     if (intervalRef.current) clearInterval(intervalRef.current);
 
     intervalRef.current = setInterval(() => {
@@ -68,10 +76,14 @@ export function DropBrand({
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
+    if (settleRef.current) {
+      clearInterval(settleRef.current);
+      settleRef.current = null;
+    }
 
     // Gracefully resolve back to 'XYZ' with a smooth transition
     let settleSteps = 3;
-    const settleInterval = setInterval(() => {
+    settleRef.current = setInterval(() => {
       settleSteps--;
       if (settleSteps === 2) {
         setLetters(['α', 'β', 'Z']);
@@ -80,14 +92,28 @@ export function DropBrand({
       } else {
         setLetters(['X', 'Y', 'Z']);
         setIsAnimating(false);
-        clearInterval(settleInterval);
+        if (settleRef.current) {
+          clearInterval(settleRef.current);
+          settleRef.current = null;
+        }
       }
     }, 60);
+  };
+
+  const handleTouch = () => {
+    if (!interactive) return;
+    if (touchTimerRef.current) clearTimeout(touchTimerRef.current);
+    startAnimation();
+    touchTimerRef.current = setTimeout(() => {
+      stopAnimation();
+    }, 1600);
   };
 
   useEffect(() => {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
+      if (settleRef.current) clearInterval(settleRef.current);
+      if (touchTimerRef.current) clearTimeout(touchTimerRef.current);
     };
   }, []);
 
@@ -95,10 +121,10 @@ export function DropBrand({
     <Component
       onMouseEnter={startAnimation}
       onMouseLeave={stopAnimation}
-      onTouchStart={startAnimation}
-      onTouchEnd={() => setTimeout(stopAnimation, 1800)}
+      onTouchStart={handleTouch}
       onClick={onClick}
-      className={`inline-flex items-center select-none cursor-pointer group shrink-0 overflow-visible ${className}`}
+      className={`inline-flex items-center select-none cursor-pointer group shrink-0 overflow-visible touch-manipulation pr-1.5 ${className}`}
+      style={{ WebkitTapHighlightColor: 'transparent' }}
       title="DropXYZ"
     >
       {showLogo && (
@@ -107,31 +133,33 @@ export function DropBrand({
           className="mr-2 shrink-0 transition-transform duration-300 group-hover:scale-110 group-hover:rotate-6" 
         />
       )}
-      <span className="font-serif italic tracking-tight transition-colors duration-200 shrink-0">
-        Drop
-      </span>
-      {/* Suffix container with overflow-visible and generous clearance padding so right side of Z is NEVER cut */}
-      <span className="relative inline-flex items-baseline font-serif italic tracking-tight overflow-visible pl-0.5 pr-2.5 py-0.5">
-        {letters.map((char, index) => (
-          <span
-            key={index}
-            className={`
-              inline-block overflow-visible transition-all duration-100 transform
-              ${isHovered 
-                ? 'text-[var(--accent)] scale-105 -translate-y-[1px]' 
-                : 'text-inherit scale-100 translate-y-0'
-              }
-            `}
-            style={{
-              transitionDelay: `${index * 25}ms`,
-            }}
-          >
-            {char}
-          </span>
-        ))}
-        {isHovered && (
-          <span className="absolute bottom-0 left-0 right-1 h-[1.5px] bg-[var(--accent)]/40 animate-pulse rounded-full" />
-        )}
+      <span className={`items-center overflow-visible ${hideTextOnMobile ? 'hidden sm:inline-flex' : 'inline-flex'}`}>
+        <span className="font-serif italic tracking-tight transition-colors duration-200 shrink-0">
+          Drop
+        </span>
+        {/* Suffix container with overflow-visible and generous clearance padding so right side of Z is NEVER cut */}
+        <span className="relative inline-flex items-baseline font-serif italic tracking-tight overflow-visible pl-0.5 pr-3 py-0.5">
+          {letters.map((char, index) => (
+            <span
+              key={index}
+              className={`
+                inline-block overflow-visible transition-all duration-100 transform
+                ${isHovered 
+                  ? 'text-[var(--accent)] scale-105 -translate-y-[1px]' 
+                  : 'text-inherit scale-100 translate-y-0'
+                }
+              `}
+              style={{
+                transitionDelay: `${index * 25}ms`,
+              }}
+            >
+              {char}
+            </span>
+          ))}
+          {isHovered && (
+            <span className="absolute bottom-0 left-0 right-1.5 h-[1.5px] bg-[var(--accent)]/40 animate-pulse rounded-full" />
+          )}
+        </span>
       </span>
     </Component>
   );
