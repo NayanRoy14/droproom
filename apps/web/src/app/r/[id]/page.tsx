@@ -93,7 +93,7 @@ function getFileIcon(filename: string) {
     case 'mp4':
     case 'mov':
     case 'webm':
-      return <Film className="w-3.5 h-3.5 text-purple-500 shrink-0" />;
+      return <Film className="w-3.5 h-3.5 text-rose-500 shrink-0" />;
     case 'mp3':
     case 'wav':
     case 'ogg':
@@ -1000,7 +1000,7 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                               isMe ? 'text-[var(--bg)]/70' : 'text-[var(--muted)]'
                             }`}>
                               {formatTime(msg.timestamp)}
-                              {isMe && <CheckCheck className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />}
+                              {isMe && <CheckCheck className="w-3.5 h-3.5 text-[#38bdf8] dark:text-[#0284c7] shrink-0" />}
                             </span>
                           </div>
 
