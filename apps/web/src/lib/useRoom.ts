@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { ClientEvent, ServerEvent, Room, Participant, ChatMessage, FileMetadata, JoinRequest } from '@droproom/shared';
+import { ClientEvent, ServerEvent, Room, Participant, ChatMessage, FileMetadata, JoinRequest, ChatReference, ReactionSummary } from '@droproom/shared';
 
 import { API_URL } from '@/lib/config';
 
@@ -86,6 +86,16 @@ export function useRoom(roomId: string, adminToken?: string, participantId?: str
             break;
           case 'CHAT_MESSAGE':
             setMessages(m => [...m, data.payload]);
+            break;
+          case 'CHAT_DELETED':
+            setMessages(m => m.filter(x => x.id !== data.payload.messageId));
+            break;
+          case 'REACTION_UPDATED':
+            if (data.payload.itemType === 'message') {
+              setMessages(msgs => msgs.map(m => m.id === data.payload.itemId ? { ...m, reactions: data.payload.reactions } : m));
+            } else if (data.payload.itemType === 'file') {
+              setFiles(fls => fls.map(f => f.id === data.payload.itemId ? { ...f, reactions: data.payload.reactions } : f));
+            }
             break;
           case 'FILE_SHARED':
             setFiles(f => [data.payload, ...f]);
@@ -224,6 +234,18 @@ export function useRoom(roomId: string, adminToken?: string, participantId?: str
     }
   }, [roomId, adminToken]);
 
+  const sendChatMessage = useCallback((message: string, replyTo?: ChatReference) => {
+    sendEvent({ type: 'CHAT_SEND', payload: { message, replyTo } });
+  }, [sendEvent]);
+
+  const deleteMessage = useCallback((messageId: string) => {
+    sendEvent({ type: 'CHAT_DELETE', payload: { messageId } });
+  }, [sendEvent]);
+
+  const toggleReaction = useCallback((itemId: string, itemType: 'message' | 'file', emoji: string) => {
+    sendEvent({ type: 'REACTION_TOGGLE', payload: { itemId, itemType, emoji } });
+  }, [sendEvent]);
+
   return {
     status,
     rejectReason,
@@ -235,6 +257,9 @@ export function useRoom(roomId: string, adminToken?: string, participantId?: str
     isAdmin,
     sessionId: sessionIdState || sessionId.current,
     sendEvent,
+    sendChatMessage,
+    deleteMessage,
+    toggleReaction,
     approveJoin,
     rejectJoin,
     endRoom

@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { AwsClient } from 'aws4fetch';
 import { Env } from './types';
-import { ClientEvent, ServerEvent, Room, Participant, ChatMessage, FileMetadata, JoinRequest } from '@droproom/shared';
+import { ClientEvent, ServerEvent, Room, Participant, ChatMessage, FileMetadata, JoinRequest, ReactionSummary } from '@droproom/shared';
 
 export const MAX_FILE_SIZE_BYTES = 1024 * 1024 * 1024; // 1 GB per file
 export const MAX_ROOM_STORAGE_BYTES = 2.5 * 1024 * 1024 * 1024; // 2.5 GB max per room
@@ -85,8 +85,18 @@ export class RoomDurableObject extends DurableObject {
         sender_id TEXT,
         sender_name TEXT,
         content TEXT,
+        created_at INTEGER,
+        reply_to TEXT
+      );
+      CREATE TABLE IF NOT EXISTS reactions (
+        id TEXT PRIMARY KEY,
+        item_id TEXT,
+        item_type TEXT,
+        user_id TEXT,
+        emoji TEXT,
         created_at INTEGER
       );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_reactions_user_item ON reactions (item_id, user_id);
       CREATE TABLE IF NOT EXISTS files (
         id TEXT PRIMARY KEY,
         object_key TEXT,
@@ -98,6 +108,22 @@ export class RoomDurableObject extends DurableObject {
         created_at INTEGER
       );
     `);
+
+    try {
+      this.ctx.storage.sql.exec('ALTER TABLE messages ADD COLUMN reply_to TEXT');
+    } catch (e) {}
+  }
+
+  private getReactionsForItem(itemId: string): ReactionSummary[] {
+    const rows = this.ctx.storage.sql.exec(
+      'SELECT emoji, COUNT(*) as count, GROUP_CONCAT(user_id) as user_ids FROM reactions WHERE item_id = ? GROUP BY emoji',
+      itemId
+    ).toArray();
+    return rows.map(r => ({
+      emoji: r.emoji as string,
+      count: Number(r.count || 0),
+      userIds: (r.user_ids as string)?.split(',') || []
+    }));
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -485,25 +511,116 @@ export class RoomDurableObject extends DurableObject {
           const trimmed = rawMessage.trim();
           if (!trimmed || trimmed.length > 2000) return; // Prevent empty or oversized spam
           let senderName = 'Host';
-          let senderId = 'admin';
+          let senderId = 'host';
           if (session.participantId && session.participantId !== 'host' && !session.isAdmin) {
             const p = this.getParticipant(session.participantId);
             if (!p) return;
             senderName = p.displayName;
             senderId = p.id;
           }
-          const msg = {
+
+          let replyTo = undefined;
+          let replyToDb = null;
+          if (event.payload?.replyTo && typeof event.payload.replyTo === 'object') {
+            const ref = event.payload.replyTo;
+            if ((ref.type === 'message' || ref.type === 'file') && typeof ref.id === 'string' && typeof ref.name === 'string') {
+              replyTo = {
+                type: ref.type,
+                id: String(ref.id).slice(0, 100),
+                name: String(ref.name).slice(0, 100),
+                preview: String(ref.preview || '').slice(0, 200)
+              };
+              replyToDb = JSON.stringify(replyTo);
+            }
+          }
+
+          const msg: ChatMessage = {
             id: generateId(),
             roomId: this.roomId,
             senderId,
             senderName,
             message: trimmed,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            replyTo,
+            reactions: []
           };
-          this.ctx.storage.sql.exec('INSERT INTO messages (id, sender_id, sender_name, content, created_at) VALUES (?, ?, ?, ?, ?)',
-            msg.id, msg.senderId, msg.senderName, msg.message, msg.timestamp);
+          this.ctx.storage.sql.exec('INSERT INTO messages (id, sender_id, sender_name, content, created_at, reply_to) VALUES (?, ?, ?, ?, ?, ?)',
+            msg.id, msg.senderId, msg.senderName, msg.message, msg.timestamp, replyToDb);
           
           this.broadcast({ type: 'CHAT_MESSAGE', payload: msg });
+          break;
+        }
+
+        case 'CHAT_DELETE': {
+          if (!session.participantId && !session.isAdmin) return;
+          const { messageId } = (event as any).payload || {};
+          if (!messageId || typeof messageId !== 'string') return;
+
+          const msgRow = this.ctx.storage.sql.exec('SELECT * FROM messages WHERE id = ? LIMIT 1', messageId).toArray()[0];
+          if (!msgRow) return;
+
+          const now = Date.now();
+          const createdAt = Number(msgRow.created_at || 0);
+          const TWO_MINUTES_MS = 2 * 60 * 1000;
+
+          // Enforce 2-minute deletion window
+          if (now - createdAt > TWO_MINUTES_MS) {
+            this.send(ws, { type: 'ERROR', payload: { message: 'Messages can only be deleted within 2 minutes of sending.' } });
+            return;
+          }
+
+          // Enforce author ownership (or host/admin)
+          const isSender = (session.participantId && msgRow.sender_id === session.participantId) ||
+                           (session.isAdmin && (msgRow.sender_id === 'host' || msgRow.sender_id === 'admin'));
+          if (!isSender && !session.isAdmin) {
+            this.send(ws, { type: 'ERROR', payload: { message: 'You can only delete your own messages.' } });
+            return;
+          }
+
+          this.ctx.storage.sql.exec('DELETE FROM messages WHERE id = ?', messageId);
+          this.ctx.storage.sql.exec('DELETE FROM reactions WHERE item_id = ?', messageId);
+          this.broadcast({ type: 'CHAT_DELETED', payload: { messageId } });
+          break;
+        }
+
+        case 'REACTION_TOGGLE': {
+          if (!session.participantId && !session.isAdmin) return;
+          const { itemId, itemType, emoji } = (event as any).payload || {};
+          if (!itemId || !emoji || (itemType !== 'message' && itemType !== 'file')) return;
+          const cleanEmoji = String(emoji).trim().slice(0, 10);
+          if (!cleanEmoji) return;
+
+          const userId = session.isAdmin ? 'host' : session.participantId!;
+
+          // Check existing reaction for this user on this item
+          const existing = this.ctx.storage.sql.exec(
+            'SELECT id, emoji FROM reactions WHERE item_id = ? AND user_id = ? LIMIT 1',
+            itemId, userId
+          ).toArray()[0];
+
+          if (existing && existing.emoji === cleanEmoji) {
+            // Same emoji clicked again -> toggle off
+            this.ctx.storage.sql.exec('DELETE FROM reactions WHERE id = ?', existing.id);
+          } else if (existing) {
+            // Different emoji clicked -> replace reaction (strictly 1 reaction per user per item)
+            this.ctx.storage.sql.exec(
+              'UPDATE reactions SET emoji = ?, created_at = ? WHERE id = ?',
+              cleanEmoji, Date.now(), existing.id
+            );
+          } else {
+            // New reaction
+            this.ctx.storage.sql.exec(
+              'INSERT INTO reactions (id, item_id, item_type, user_id, emoji, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+              generateId(), itemId, itemType, userId, cleanEmoji, Date.now()
+            );
+          }
+
+          // Query aggregated reactions for this item and broadcast to all participants
+          const reactions = this.getReactionsForItem(itemId);
+          this.broadcast({
+            type: 'REACTION_UPDATED',
+            payload: { itemId, itemType, reactions }
+          });
           break;
         }
 
@@ -666,6 +783,7 @@ export class RoomDurableObject extends DurableObject {
     this.ctx.storage.sql.exec('DELETE FROM join_requests');
     this.ctx.storage.sql.exec('DELETE FROM messages');
     this.ctx.storage.sql.exec('DELETE FROM files');
+    this.ctx.storage.sql.exec('DELETE FROM reactions');
     this.cleanupAlarmSet = false;
   }
 
@@ -753,14 +871,36 @@ export class RoomDurableObject extends DurableObject {
       joinedAt: r.joined_at as number
     }));
 
-    const messages = this.ctx.storage.sql.exec('SELECT * FROM messages ORDER BY created_at DESC LIMIT 100').toArray().reverse().map(r => ({
-      id: r.id as string,
-      roomId: this.roomId,
-      senderId: r.sender_id as string,
-      senderName: r.sender_name as string,
-      message: r.content as string,
-      timestamp: r.created_at as number
-    }));
+    const reactionsMap = new Map<string, ReactionSummary[]>();
+    const allReactionRows = this.ctx.storage.sql.exec(
+      'SELECT item_id, emoji, COUNT(*) as count, GROUP_CONCAT(user_id) as user_ids FROM reactions GROUP BY item_id, emoji'
+    ).toArray();
+    for (const r of allReactionRows) {
+      const itemId = r.item_id as string;
+      if (!reactionsMap.has(itemId)) reactionsMap.set(itemId, []);
+      reactionsMap.get(itemId)!.push({
+        emoji: r.emoji as string,
+        count: Number(r.count || 0),
+        userIds: (r.user_ids as string)?.split(',') || []
+      });
+    }
+
+    const messages = this.ctx.storage.sql.exec('SELECT * FROM messages ORDER BY created_at DESC LIMIT 100').toArray().reverse().map(r => {
+      let replyTo = undefined;
+      if (r.reply_to) {
+        try { replyTo = JSON.parse(r.reply_to as string); } catch (e) {}
+      }
+      return {
+        id: r.id as string,
+        roomId: this.roomId,
+        senderId: r.sender_id as string,
+        senderName: r.sender_name as string,
+        message: r.content as string,
+        timestamp: r.created_at as number,
+        replyTo,
+        reactions: reactionsMap.get(r.id as string) || []
+      };
+    });
 
     const files = this.ctx.storage.sql.exec('SELECT * FROM files ORDER BY created_at DESC').toArray().map(r => ({
       id: r.id as string,
@@ -770,7 +910,8 @@ export class RoomDurableObject extends DurableObject {
       mimeType: r.mime_type as string,
       uploaderId: r.uploader_id as string,
       uploaderName: r.uploader_name as string,
-      createdAt: r.created_at as number
+      createdAt: r.created_at as number,
+      reactions: reactionsMap.get(r.id as string) || []
     }));
 
     let joinRequests: JoinRequest[] | undefined;

@@ -12,6 +12,19 @@ export interface Participant {
   joinedAt: number;
 }
 
+export interface ChatReference {
+  type: 'message' | 'file';
+  id: string;
+  name: string;
+  preview: string;
+}
+
+export interface ReactionSummary {
+  emoji: string;
+  count: number;
+  userIds: string[];
+}
+
 export interface ChatMessage {
   id: string;
   roomId: string;
@@ -19,6 +32,8 @@ export interface ChatMessage {
   senderName: string;
   message: string;
   timestamp: number;
+  replyTo?: ChatReference;
+  reactions?: ReactionSummary[];
 }
 
 export interface FileMetadata {
@@ -30,6 +45,7 @@ export interface FileMetadata {
   uploaderId: string;
   uploaderName: string;
   createdAt: number;
+  reactions?: ReactionSummary[];
 }
 
 export interface JoinRequest {
@@ -44,7 +60,9 @@ export type ClientEvent =
   | { type: 'JOIN_REQUEST'; payload: { displayName: string } }
   | { type: 'JOIN_APPROVE'; payload: { participantId: string } }
   | { type: 'JOIN_REJECT'; payload: { participantId: string } }
-  | { type: 'CHAT_SEND'; payload: { message: string } }
+  | { type: 'CHAT_SEND'; payload: { message: string; replyTo?: ChatReference } }
+  | { type: 'CHAT_DELETE'; payload: { messageId: string } }
+  | { type: 'REACTION_TOGGLE'; payload: { itemId: string; itemType: 'message' | 'file'; emoji: string } }
   | { type: 'FILE_UPLOAD_COMPLETE'; payload: { fileId: string; originalName: string; size: number; mimeType: string } }
   | { type: 'REMOVE_PARTICIPANT'; payload: { participantId: string } }
   | { type: 'END_ROOM' }
@@ -60,6 +78,8 @@ export type ServerEvent =
   | { type: 'PARTICIPANT_LEFT'; payload: { participantId: string } }
   | { type: 'PARTICIPANT_REMOVED'; payload: { participantId: string } }
   | { type: 'CHAT_MESSAGE'; payload: ChatMessage }
+  | { type: 'CHAT_DELETED'; payload: { messageId: string } }
+  | { type: 'REACTION_UPDATED'; payload: { itemId: string; itemType: 'message' | 'file'; reactions: ReactionSummary[] } }
   | { type: 'FILE_SHARED'; payload: FileMetadata }
   | { type: 'FILE_REMOVED'; payload: { fileId: string } }
   | { type: 'ROOM_ENDED' }

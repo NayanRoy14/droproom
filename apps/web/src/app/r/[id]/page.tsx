@@ -9,12 +9,21 @@ import {
   Users, Check, X, LogOut, Send, AlertCircle, 
   FileText, Copy, CheckCheck, Image as ImageIcon, 
   FileCode, Archive, Music, Film, ShieldAlert,
-  QrCode, Upload
+  QrCode, Upload, Smile, Reply, Trash2, MessageSquare, Plus
 } from 'lucide-react';
 import { formatBytes } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
 import { API_URL } from '@/lib/config';
 import { QRCodeModal } from '@/components/QRCodeModal';
+import { ChatReference, ReactionSummary } from '@droproom/shared';
+
+const QUICK_EMOJIS = ['👍', '❤️', '🔥', '😂', '👏', '🎉'];
+const CHAT_EMOJIS = [
+  '👍', '❤️', '🔥', '😂', '👏', '🎉', '🚀', '👀',
+  '💯', '✨', '🙌', '💡', '🤝', '⚡️', '🎯', '💬',
+  '📁', '🔒', '⏱️', '✅', '👋', '🥳', '🤔', '🙏',
+  '😍', '🤩', '😎', '🫡', '💪', '🎈', '🍕', '☕️'
+];
 
 function getFileIcon(filename: string) {
   const ext = filename.split('.').pop()?.toLowerCase();
@@ -81,6 +90,12 @@ export default function RoomPage({ params }: { params: { id: string } }) {
   const [copied, setCopied] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
+  const [replyingTo, setReplyingTo] = useState<ChatReference | null>(null);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [activeReactionPickerId, setActiveReactionPickerId] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState(Date.now());
+  const chatInputRef = useRef<HTMLInputElement>(null);
+
   const [windowDragOver, setWindowDragOver] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState<File[] | null>(null);
   const dragCounter = useRef(0);
@@ -98,8 +113,64 @@ export default function RoomPage({ params }: { params: { id: string } }) {
 
   const {
     status, rejectReason, room, participants, messages, files, joinRequests,
-    isAdmin, sessionId, sendEvent, approveJoin, rejectJoin, endRoom
+    isAdmin, sessionId, sendEvent, sendChatMessage, deleteMessage, toggleReaction, approveJoin, rejectJoin, endRoom
   } = useRoom(normalizedId, adminToken);
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(Date.now()), 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target?.closest?.('.reaction-picker-container')) {
+        setActiveReactionPickerId(null);
+      }
+      if (!target?.closest?.('.emoji-picker-container')) {
+        setShowEmojiPicker(false);
+      }
+    };
+    window.addEventListener('click', handleClickOutside);
+    return () => window.removeEventListener('click', handleClickOutside);
+  }, []);
+
+  const handleInsertEmoji = (emoji: string) => {
+    setMessageInput(prev => prev + emoji);
+    setShowEmojiPicker(false);
+    chatInputRef.current?.focus();
+  };
+
+  const handleReplyMessage = (msg: any) => {
+    setReplyingTo({
+      type: 'message',
+      id: msg.id,
+      name: msg.senderName,
+      preview: msg.message.slice(0, 80)
+    });
+    chatInputRef.current?.focus();
+  };
+
+  const handleTagFile = (file: any) => {
+    setReplyingTo({
+      type: 'file',
+      id: file.id,
+      name: file.originalName,
+      preview: formatBytes(file.size)
+    });
+    chatInputRef.current?.focus();
+  };
+
+  const handleScrollToItem = (id: string) => {
+    const el = document.getElementById(`item-${id}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('ring-2', 'ring-[var(--accent)]');
+      setTimeout(() => {
+        el.classList.remove('ring-2', 'ring-[var(--accent)]');
+      }, 2000);
+    }
+  };
 
   useEffect(() => {
     if (isAdmin && joinRequests.length > prevJoinReqCount.current) {
@@ -603,37 +674,113 @@ export default function RoomPage({ params }: { params: { id: string } }) {
               <div className="space-y-2">
                 {files.map(file => (
                   <div 
+                    id={`item-${file.id}`}
                     key={file.id} 
-                    className="group flex items-center justify-between gap-3 p-3 sm:p-3.5 rounded-2xl border border-[var(--line)]/80 bg-[var(--surface)]/30 hover:bg-[var(--surface)] hover:border-[var(--line)] transition-all"
+                    className="group flex flex-col p-3 sm:p-3.5 rounded-2xl border border-[var(--line)]/80 bg-[var(--surface)]/30 hover:bg-[var(--surface)] hover:border-[var(--line)] transition-all gap-2"
                   >
-                    <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <div className="w-9 h-9 rounded-xl bg-[var(--bg)] border border-[var(--line)] flex items-center justify-center shrink-0 shadow-2xs">
-                        {getFileIcon(file.originalName)}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <span className="text-xs sm:text-sm font-medium text-[var(--fg)] truncate block" title={file.originalName}>
-                          {file.originalName}
-                        </span>
-                        <div className="flex items-center gap-2 text-[11px] text-[var(--faint)] font-mono mt-0.5">
-                          <span>{formatBytes(file.size)}</span>
-                          <span>·</span>
-                          <span className="truncate">{file.uploaderName}</span>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="w-9 h-9 rounded-xl bg-[var(--bg)] border border-[var(--line)] flex items-center justify-center shrink-0 shadow-2xs">
+                          {getFileIcon(file.originalName)}
                         </div>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-xs sm:text-sm font-medium text-[var(--fg)] truncate block" title={file.originalName}>
+                            {file.originalName}
+                          </span>
+                          <div className="flex items-center gap-2 text-[11px] text-[var(--faint)] font-mono mt-0.5">
+                            <span>{formatBytes(file.size)}</span>
+                            <span>·</span>
+                            <span className="truncate">{file.uploaderName}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {/* Tag/Quote in chat */}
+                        <button
+                          type="button"
+                          onClick={() => handleTagFile(file)}
+                          className="h-8.5 px-2.5 rounded-xl bg-[var(--bg)] hover:bg-[var(--hover)] border border-[var(--line)] text-xs text-[var(--muted)] hover:text-[var(--fg)] transition-all shadow-2xs flex items-center gap-1 cursor-pointer"
+                          title="Reference / Tag in chat"
+                        >
+                          <MessageSquare className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline text-[11px]">Tag</span>
+                        </button>
+
+                        {/* Quick Reaction Button */}
+                        <div className="relative reaction-picker-container">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveReactionPickerId(activeReactionPickerId === file.id ? null : file.id);
+                            }}
+                            className="h-8.5 w-8.5 rounded-xl bg-[var(--bg)] hover:bg-[var(--hover)] border border-[var(--line)] text-[var(--muted)] hover:text-[var(--fg)] transition-all shadow-2xs flex items-center justify-center cursor-pointer"
+                            title="React with emoji"
+                          >
+                            <Smile className="w-3.5 h-3.5" />
+                          </button>
+                          {activeReactionPickerId === file.id && (
+                            <div className="absolute right-0 bottom-10 z-30 flex items-center gap-1 bg-[var(--bg)] border border-[var(--line)] shadow-xl rounded-full p-1 animate-pop-in">
+                              {QUICK_EMOJIS.map(emoji => (
+                                <button
+                                  key={emoji}
+                                  type="button"
+                                  onClick={() => {
+                                    toggleReaction(file.id, 'file', emoji);
+                                    setActiveReactionPickerId(null);
+                                  }}
+                                  className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-[var(--hover)] hover:scale-120 transition-transform cursor-pointer text-sm"
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Download button */}
+                        <button 
+                          onClick={() => handleDownload(file.id, file.originalName)}
+                          disabled={downloadingId === file.id}
+                          className="h-8.5 px-3 rounded-xl bg-[var(--bg)] hover:bg-[var(--fg)] hover:text-[var(--bg)] border border-[var(--line)] text-xs font-medium transition-all shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                          title="Download file"
+                        >
+                          {downloadingId === file.id ? (
+                            <span className="text-xs animate-pulse">Downloading…</span>
+                          ) : (
+                            <span>Download ↓</span>
+                          )}
+                        </button>
                       </div>
                     </div>
 
-                    <button 
-                      onClick={() => handleDownload(file.id, file.originalName)}
-                      disabled={downloadingId === file.id}
-                      className="h-8.5 px-3.5 rounded-xl bg-[var(--bg)] hover:bg-[var(--fg)] hover:text-[var(--bg)] border border-[var(--line)] text-xs font-medium transition-all shadow-2xs flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-50"
-                      title="Download file"
-                    >
-                      {downloadingId === file.id ? (
-                        <span className="text-xs animate-pulse">Downloading…</span>
-                      ) : (
-                        <span>Download ↓</span>
-                      )}
-                    </button>
+                    {/* File Reaction Badges */}
+                    {file.reactions && file.reactions.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1 pl-12">
+                        {file.reactions.map(r => {
+                          const hasReacted = sessionId ? r.userIds.includes(sessionId) || (isAdmin && r.userIds.includes('host')) : false;
+                          return (
+                            <button
+                              key={r.emoji}
+                              type="button"
+                              onClick={() => toggleReaction(file.id, 'file', r.emoji)}
+                              className={`
+                                inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-mono border transition-all cursor-pointer
+                                ${hasReacted 
+                                  ? 'bg-[var(--accent)]/15 border-[var(--accent)]/50 text-[var(--fg)] font-semibold shadow-2xs scale-[1.02]' 
+                                  : 'bg-[var(--surface)] border-[var(--line)] text-[var(--muted)] hover:border-[var(--faint)] hover:text-[var(--fg)]'
+                                }
+                              `}
+                              title={`${r.count} reaction${r.count > 1 ? 's' : ''}${hasReacted ? ' (click to remove)' : ' (click to add)'}`}
+                            >
+                              <span>{r.emoji}</span>
+                              <span className="text-[10px] tabular-nums">{r.count}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -650,11 +797,14 @@ export default function RoomPage({ params }: { params: { id: string } }) {
               </div>
               <div className="space-y-3.5">
                 {messages.map(msg => {
-                  const isMe = msg.senderId === sessionId || (isAdmin && msg.senderId === 'admin');
+                  const isMe = msg.senderId === sessionId || (isAdmin && (msg.senderId === 'host' || msg.senderId === 'admin'));
+                  const canDelete = isMe && (currentTime - msg.timestamp <= 120_000);
+
                   return (
                     <div 
+                      id={`item-${msg.id}`}
                       key={msg.id} 
-                      className={`flex flex-col animate-settle ${isMe ? 'items-end' : 'items-start'}`}
+                      className={`group flex flex-col animate-settle ${isMe ? 'items-end' : 'items-start'} transition-all rounded-xl`}
                     >
                       <div className="flex items-center gap-2 px-1 mb-1">
                         <span className="text-[11px] font-medium text-[var(--muted)]">{isMe ? 'You' : msg.senderName}</span>
@@ -662,15 +812,139 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                           <span className="text-[10px] text-[var(--faint)] font-mono">· {formatTime(msg.timestamp)}</span>
                         )}
                       </div>
-                      <div className={`
-                        px-4 py-2.5 sm:py-3 text-xs sm:text-[13px] rounded-2xl max-w-[85%] sm:max-w-[72%] leading-relaxed break-words shadow-2xs
-                        ${isMe 
-                          ? 'bg-[var(--fg)] text-[var(--bg)] rounded-br-xs' 
-                          : 'bg-[var(--surface)] text-[var(--fg)] border border-[var(--line)] rounded-bl-xs'
-                        }
-                      `}>
-                        {msg.message}
+
+                      <div className={`relative flex items-center gap-1.5 max-w-[85%] sm:max-w-[72%] ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+                        {/* Message Bubble */}
+                        <div className={`
+                          px-4 py-2.5 sm:py-3 text-xs sm:text-[13px] rounded-2xl leading-relaxed break-words shadow-2xs
+                          ${isMe 
+                            ? 'bg-[var(--fg)] text-[var(--bg)] rounded-br-xs' 
+                            : 'bg-[var(--surface)] text-[var(--fg)] border border-[var(--line)] rounded-bl-xs'
+                          }
+                        `}>
+                          {/* Quote / Reply Tag Banner */}
+                          {msg.replyTo && (
+                            <div 
+                              onClick={() => handleScrollToItem(msg.replyTo!.id)}
+                              className={`
+                                mb-2 p-2 rounded-xl text-[11px] leading-snug cursor-pointer border transition-opacity hover:opacity-85 flex items-start gap-1.5
+                                ${isMe 
+                                  ? 'bg-black/15 text-[var(--bg)] border-white/20' 
+                                  : 'bg-[var(--hover)] text-[var(--fg)] border-[var(--line)]'
+                                }
+                              `}
+                              title="Click to view quoted item"
+                            >
+                              {msg.replyTo.type === 'file' ? (
+                                <FileText className="w-3.5 h-3.5 mt-0.5 shrink-0 opacity-70" />
+                              ) : (
+                                <Reply className="w-3.5 h-3.5 mt-0.5 shrink-0 opacity-70" />
+                              )}
+                              <div className="min-w-0 flex-1 truncate">
+                                <span className="font-semibold block truncate">
+                                  {msg.replyTo.type === 'file' ? '📁 ' : '↩ '}
+                                  {msg.replyTo.name}
+                                </span>
+                                <span className="opacity-80 block truncate font-normal text-[10px]">
+                                  {msg.replyTo.preview}
+                                </span>
+                              </div>
+                            </div>
+                          )}
+
+                          {msg.message}
+                        </div>
+
+                        {/* Hover Action Toolbar */}
+                        <div className={`
+                          opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex items-center gap-1
+                          ${isMe ? 'mr-1' : 'ml-1'}
+                        `}>
+                          {/* Reply / Tag button */}
+                          <button
+                            type="button"
+                            onClick={() => handleReplyMessage(msg)}
+                            className="w-6 h-6 rounded-lg bg-[var(--surface)] border border-[var(--line)] text-[var(--muted)] hover:text-[var(--fg)] hover:scale-105 transition-all flex items-center justify-center cursor-pointer shadow-2xs"
+                            title="Reply to message"
+                          >
+                            <Reply className="w-3 h-3" />
+                          </button>
+
+                          {/* Quick Reaction button */}
+                          <div className="relative reaction-picker-container">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveReactionPickerId(activeReactionPickerId === msg.id ? null : msg.id);
+                              }}
+                              className="w-6 h-6 rounded-lg bg-[var(--surface)] border border-[var(--line)] text-[var(--muted)] hover:text-[var(--fg)] hover:scale-105 transition-all flex items-center justify-center cursor-pointer shadow-2xs"
+                              title="React"
+                            >
+                              <Smile className="w-3 h-3" />
+                            </button>
+                            {activeReactionPickerId === msg.id && (
+                              <div className={`
+                                absolute bottom-8 z-30 flex items-center gap-1 bg-[var(--bg)] border border-[var(--line)] shadow-xl rounded-full p-1 animate-pop-in
+                                ${isMe ? 'right-0' : 'left-0'}
+                              `}>
+                                {QUICK_EMOJIS.map(emoji => (
+                                  <button
+                                    key={emoji}
+                                    type="button"
+                                    onClick={() => {
+                                      toggleReaction(msg.id, 'message', emoji);
+                                      setActiveReactionPickerId(null);
+                                    }}
+                                    className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-[var(--hover)] hover:scale-120 transition-transform cursor-pointer text-sm"
+                                  >
+                                    {emoji}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Delete within 2 minutes button */}
+                          {canDelete && (
+                            <button
+                              type="button"
+                              onClick={() => deleteMessage(msg.id)}
+                              className="w-6 h-6 rounded-lg bg-[var(--surface)] border border-[var(--line)] text-[var(--faint)] hover:text-[var(--danger)] hover:bg-[var(--danger-bg)] hover:scale-105 transition-all flex items-center justify-center cursor-pointer shadow-2xs"
+                              title={`Delete (within 2 mins — ${Math.max(1, Math.ceil((120_000 - (currentTime - msg.timestamp)) / 1000))}s left)`}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
                       </div>
+
+                      {/* Message Reaction Badges */}
+                      {msg.reactions && msg.reactions.length > 0 && (
+                        <div className={`flex flex-wrap items-center gap-1 mt-1.5 px-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
+                          {msg.reactions.map(r => {
+                            const hasReacted = sessionId ? r.userIds.includes(sessionId) || (isAdmin && r.userIds.includes('host')) : false;
+                            return (
+                              <button
+                                key={r.emoji}
+                                type="button"
+                                onClick={() => toggleReaction(msg.id, 'message', r.emoji)}
+                                className={`
+                                  inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-mono border transition-all cursor-pointer
+                                  ${hasReacted 
+                                    ? 'bg-[var(--accent)]/15 border-[var(--accent)]/50 text-[var(--fg)] font-semibold shadow-2xs scale-[1.02]' 
+                                    : 'bg-[var(--surface)] border-[var(--line)] text-[var(--muted)] hover:border-[var(--faint)] hover:text-[var(--fg)]'
+                                  }
+                                `}
+                                title={`${r.count} reaction${r.count > 1 ? 's' : ''}${hasReacted ? ' (click to remove)' : ' (click to add)'}`}
+                              >
+                                <span>{r.emoji}</span>
+                                <span className="text-[10px] tabular-nums">{r.count}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -696,22 +970,97 @@ export default function RoomPage({ params }: { params: { id: string } }) {
 
         {/* Message Input Composer */}
         <div className="p-4 sm:p-5 border-t border-[var(--line)] bg-[var(--bg)]/95 backdrop-blur-md shrink-0 z-10">
+          {/* Active Reply Banner */}
+          {replyingTo && (
+            <div className="flex items-center justify-between px-3 py-2 bg-[var(--surface)] border border-[var(--line)] rounded-xl mb-2.5 text-xs animate-pop-in shadow-2xs">
+              <div className="flex items-center gap-2 min-w-0">
+                {replyingTo.type === 'file' ? (
+                  <FileText className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />
+                ) : (
+                  <Reply className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />
+                )}
+                <div className="truncate text-xs">
+                  <span className="font-semibold text-[var(--fg)]">
+                    {replyingTo.type === 'file' ? 'Referencing file: ' : 'Replying to '}
+                    {replyingTo.name}
+                  </span>
+                  <span className="text-[var(--muted)] ml-1 font-normal">
+                    · {replyingTo.preview}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReplyingTo(null)}
+                className="w-5 h-5 flex items-center justify-center rounded-md text-[var(--faint)] hover:text-[var(--fg)] hover:bg-[var(--hover)] transition-colors cursor-pointer shrink-0 ml-2"
+                title="Cancel reply"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           <form 
             onSubmit={(e) => {
               e.preventDefault();
-              const text = messageInput.trim() || (e.currentTarget.querySelector('input') as HTMLInputElement)?.value?.trim() || '';
+              const text = messageInput.trim();
               if (!text) return;
-              sendEvent({ type: 'CHAT_SEND', payload: { message: text } });
+              sendChatMessage(text, replyingTo || undefined);
               setMessageInput('');
+              setReplyingTo(null);
+              setShowEmojiPicker(false);
             }}
-            className="flex items-center gap-2.5"
+            className="flex items-center gap-2"
           >
+            {/* Quick Emoji Picker Button */}
+            <div className="relative emoji-picker-container">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowEmojiPicker(!showEmojiPicker);
+                }}
+                className={`h-11 w-11 flex items-center justify-center rounded-xl text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--surface)] border border-[var(--line)] transition-all cursor-pointer ${showEmojiPicker ? 'text-[var(--fg)] bg-[var(--surface)] border-[var(--fg)]' : ''}`}
+                title="Add emoji quickly"
+              >
+                <Smile className="w-4.5 h-4.5" />
+              </button>
+
+              {showEmojiPicker && (
+                <div className="absolute bottom-13 left-0 z-40 p-3 bg-[var(--bg)] border border-[var(--line)] rounded-2xl shadow-2xl w-68 animate-pop-in">
+                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-[var(--line)]/60 text-[11px] font-mono text-[var(--faint)]">
+                    <span>Quick Emojis</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowEmojiPicker(false)}
+                      className="hover:text-[var(--fg)] cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-8 gap-1">
+                    {CHAT_EMOJIS.map(emoji => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => handleInsertEmoji(emoji)}
+                        className="w-7 h-7 flex items-center justify-center text-sm rounded-lg hover:bg-[var(--hover)] hover:scale-120 transition-transform cursor-pointer"
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <input 
+              ref={chatInputRef}
               name="message"
               type="text"
               value={messageInput}
               onChange={e => setMessageInput(e.target.value)}
-              placeholder="Write a message to room…"
+              placeholder={replyingTo ? `Write a reply to ${replyingTo.name}…` : "Write a message to room…"}
               className="flex-1 h-11 px-4 bg-[var(--surface)]/70 hover:bg-[var(--surface)] focus:bg-[var(--bg)] rounded-xl text-xs sm:text-sm placeholder:text-[var(--faint)] outline-none border border-[var(--line)] focus:border-[var(--fg)] transition-all"
             />
             <button 
