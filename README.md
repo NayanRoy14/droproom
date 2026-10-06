@@ -176,6 +176,19 @@ DropRoom offers **zero persistent residue** once a room concludes:
 
 ---
 
+## Cloudflare Free-Tier Safety & Billing Protection
+
+DropRoom is engineered to operate comfortably within Cloudflare's **10 GB R2 free storage tier** with zero billing risk through multiple automated enforcement layers:
+
+1. **Per-File Size Limit**: Capped at 1 GB per file.
+2. **Per-Room Storage Quota**: 2.5 GB maximum total storage per room (both client-side warning and server-side DO SQLite enforcement).
+3. **Global Storage Ceiling (8 GB Safety Buffer)**: The `__GLOBAL_STORAGE__` Durable Object tracks total bytes across all concurrent active rooms. Upload requests are rejected with `HTTP 507 Insufficient Storage` if total storage exceeds 8 GB, guaranteeing a 2 GB buffer below Cloudflare's 10 GB threshold.
+4. **Hard Room Lifetime (2 Hours)**: Rooms automatically expire, disconnect sockets, and trigger complete storage destruction after 2 hours to prevent forgotten or abandoned browser sessions from consuming storage.
+5. **Orphan Upload Purging**: When a room concludes, R2 `ListObjectsV2` prefix deletion scans and deletes any incomplete or unregistered uploads under `rooms/{roomId}/` alongside registered files.
+6. **Infrastructure-Level Bucket Lifecycle (24-Hour TTL)**: A Cloudflare R2 bucket lifecycle rule automatically expires any objects and aborts incomplete multipart uploads after 1 day.
+
+---
+
 - **Maximum File Size**: 1 GB per file.
 - **Batch & Folder Transfers**: Supports multi-file selection, whole folder recursive upload preserving structure, and window drag-and-drop.
 - **Fast Guest Joining**: Room code click triggers QR code modal for instant mobile camera joining.

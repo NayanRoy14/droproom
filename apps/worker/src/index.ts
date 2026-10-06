@@ -17,6 +17,16 @@ export default {
     }
 
     try {
+      if (request.method === 'GET' && url.pathname === '/api/storage-stats') {
+        const globalId = env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
+        const globalDO = env.ROOM_DO.get(globalId);
+        const statsRes = await globalDO.fetch(new Request('http://do/global-storage/stats'));
+        return new Response(statsRes.body, {
+          status: statsRes.status,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
       if (request.method === 'POST' && url.pathname === '/api/rooms') {
         const roomId = generateRoomCode(4);
         const adminToken = generateRandomString(32);
@@ -56,19 +66,38 @@ export default {
             return new Response(JSON.stringify({ error: 'Invalid file size' }), { status: 400, headers: corsHeaders });
           }
           if (size > 1024 * 1024 * 1024) {
-            return new Response(JSON.stringify({ error: 'File too large (max 1 GB)' }), { status: 413, headers: corsHeaders });
+            return new Response(JSON.stringify({ error: 'File too large (max 1 GB per file)' }), { status: 413, headers: corsHeaders });
           }
 
-          // Authorize via DO
+          // 1. Check Global Storage Ceiling (8 GB safe buffer below 10 GB free tier)
+          const globalId = env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
+          const globalDO = env.ROOM_DO.get(globalId);
+          const globalRes = await globalDO.fetch(new Request('http://do/global-storage/reserve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ size })
+          }));
+
+          if (!globalRes.ok) {
+            const errData = await globalRes.json().catch(() => ({}));
+            return new Response(JSON.stringify(errData), { status: globalRes.status, headers: corsHeaders });
+          }
+
+          // 2. Authorize via DO & Enforce 2.5 GB Room Quota
           const id = env.ROOM_DO.idFromName(roomId);
           const roomDO = env.ROOM_DO.get(id);
           const authRes = await roomDO.fetch(new Request('http://do/authorize-upload', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId, adminToken })
+            body: JSON.stringify({ sessionId, adminToken, size })
           }));
 
-          if (!authRes.ok) return new Response('Unauthorized', { status: 403, headers: corsHeaders });
+          if (!authRes.ok) {
+            const errText = await authRes.text();
+            let parsedErr;
+            try { parsedErr = JSON.parse(errText); } catch { parsedErr = { error: errText || 'Unauthorized' }; }
+            return new Response(JSON.stringify(parsedErr), { status: authRes.status, headers: corsHeaders });
+          }
 
           const fileId = crypto.randomUUID();
           const rawName = filename.split(/[/\\]/).pop() || 'file';
@@ -160,6 +189,20 @@ export default {
             body: JSON.stringify(payload)
           });
           const response = await roomDO.fetch(doReq);
+
+          if (response.ok && typeof payload?.size === 'number' && payload.size > 0) {
+            try {
+              const globalId = env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
+              const globalDO = env.ROOM_DO.get(globalId);
+              await globalDO.fetch(new Request('http://do/global-storage/record', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ size: payload.size })
+              }));
+            } catch (e) {
+              console.error('Failed to record global storage', e);
+            }
+          }
           
           return new Response(response.body, {
             status: response.status,

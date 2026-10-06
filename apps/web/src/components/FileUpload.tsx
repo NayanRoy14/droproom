@@ -6,6 +6,7 @@ import { API_URL } from '@/lib/config';
 import { formatBytes } from '@/lib/utils';
 
 const MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1 GB
+const MAX_ROOM_STORAGE = 2.5 * 1024 * 1024 * 1024; // 2.5 GB
 
 export interface UploadQueueItem {
   id: string;
@@ -24,6 +25,7 @@ interface FileUploadProps {
   onUploadComplete: () => void;
   externalFiles?: File[] | null;
   onClearExternalFiles?: () => void;
+  existingTotalBytes?: number;
 }
 
 export function FileUpload({ 
@@ -31,7 +33,8 @@ export function FileUpload({
   sessionId, 
   onUploadComplete,
   externalFiles,
-  onClearExternalFiles 
+  onClearExternalFiles,
+  existingTotalBytes = 0
 }: FileUploadProps) {
   const [queue, setQueue] = useState<UploadQueueItem[]>([]);
   const [dragOver, setDragOver] = useState(false);
@@ -46,22 +49,36 @@ export function FileUpload({
   const addFilesToQueue = useCallback((files: File[]) => {
     if (!files.length) return;
 
+    let cumulativeTotal = existingTotalBytes + queueRef.current.reduce((acc, item) => acc + (item.status !== 'error' ? item.size : 0), 0);
+
     const newItems: UploadQueueItem[] = files.map((file) => {
       const isOversized = file.size > MAX_FILE_SIZE;
+      const exceedsRoomQuota = cumulativeTotal + file.size > MAX_ROOM_STORAGE;
+      if (!isOversized && !exceedsRoomQuota) {
+        cumulativeTotal += file.size;
+      }
       const displayName = (file as any).webkitRelativePath || file.name;
+      
+      let errorMsg: string | undefined;
+      if (isOversized) {
+        errorMsg = 'Exceeds 1 GB max size';
+      } else if (exceedsRoomQuota) {
+        errorMsg = 'Exceeds 2.5 GB room quota';
+      }
+
       return {
         id: crypto.randomUUID(),
         file,
         name: displayName,
         size: file.size,
         progress: 0,
-        status: isOversized ? 'error' : 'queued',
-        error: isOversized ? 'Exceeds 1 GB max size' : undefined,
+        status: (isOversized || exceedsRoomQuota) ? 'error' : 'queued',
+        error: errorMsg,
       };
     });
 
     setQueue((prev) => [...prev, ...newItems]);
-  }, []);
+  }, [existingTotalBytes]);
 
   // Process incoming files from external drag-and-drop
   useEffect(() => {
@@ -468,7 +485,7 @@ export function FileUpload({
             </button>
           </div>
           <p className="text-[11px] text-[var(--faint)]">
-            Multiple files & folders up to 1 GB each · Ephemeral
+            Up to 1 GB per file · 2.5 GB room limit · 2-hour ephemeral lifetime
           </p>
         </div>
       </div>

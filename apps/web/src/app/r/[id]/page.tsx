@@ -585,6 +585,7 @@ export default function RoomPage({ params }: { params: { id: string } }) {
             onUploadComplete={() => {}} 
             externalFiles={droppedFiles}
             onClearExternalFiles={() => setDroppedFiles(null)}
+            existingTotalBytes={files.reduce((acc, f) => acc + f.size, 0)}
           />
 
           {/* Files section */}
@@ -595,7 +596,7 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                   Shared Files ({files.length})
                 </span>
                 <span className="text-[11px] text-[var(--faint)] font-mono">
-                  {formatBytes(files.reduce((acc, f) => acc + f.size, 0))} total
+                  {formatBytes(files.reduce((acc, f) => acc + f.size, 0))} / 2.5 GB
                 </span>
               </div>
               

@@ -3,6 +3,11 @@ import { AwsClient } from 'aws4fetch';
 import { Env } from './types';
 import { ClientEvent, ServerEvent, Room, Participant, ChatMessage, FileMetadata, JoinRequest } from '@droproom/shared';
 
+export const MAX_FILE_SIZE_BYTES = 1024 * 1024 * 1024; // 1 GB per file
+export const MAX_ROOM_STORAGE_BYTES = 2.5 * 1024 * 1024 * 1024; // 2.5 GB max per room
+export const MAX_GLOBAL_STORAGE_BYTES = 8 * 1024 * 1024 * 1024; // 8 GB safe ceiling (below 10 GB free tier)
+export const MAX_ROOM_LIFETIME_MS = 2 * 60 * 60 * 1000; // 2 hours hard cap
+
 export class RoomDurableObject extends DurableObject {
   env: Env;
   sessions: Map<WebSocket, { participantId?: string; isAdmin: boolean }> = new Map();
@@ -104,13 +109,68 @@ export class RoomDurableObject extends DurableObject {
 
     const url = new URL(request.url);
 
+    if (url.pathname.startsWith('/global-storage/')) {
+      this.ctx.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS global_storage (
+          id TEXT PRIMARY KEY,
+          total_bytes INTEGER
+        );
+        INSERT OR IGNORE INTO global_storage (id, total_bytes) VALUES ('current', 0);
+      `);
+
+      if (url.pathname === '/global-storage/reserve' && request.method === 'POST') {
+        const { size } = (await request.json().catch(() => ({}))) as any;
+        const row = this.ctx.storage.sql.exec("SELECT total_bytes FROM global_storage WHERE id = 'current'").toArray()[0];
+        const currentTotal = ((row?.total_bytes as number) || 0);
+        if (currentTotal + (Number(size) || 0) > MAX_GLOBAL_STORAGE_BYTES) {
+          return new Response(JSON.stringify({
+            error: 'Free-tier global storage capacity reached (8 GB safe limit across all active rooms). Uploads will resume once active rooms conclude.'
+          }), { status: 507, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({ ok: true, currentTotal, max: MAX_GLOBAL_STORAGE_BYTES }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/global-storage/record' && request.method === 'POST') {
+        const { size } = (await request.json().catch(() => ({}))) as any;
+        if (typeof size === 'number' && size > 0) {
+          this.ctx.storage.sql.exec("UPDATE global_storage SET total_bytes = total_bytes + ? WHERE id = 'current'", size);
+        }
+        return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
+      }
+
+      if (url.pathname === '/global-storage/release' && request.method === 'POST') {
+        const { size } = (await request.json().catch(() => ({}))) as any;
+        if (typeof size === 'number' && size > 0) {
+          this.ctx.storage.sql.exec("UPDATE global_storage SET total_bytes = MAX(0, total_bytes - ?) WHERE id = 'current'", size);
+        }
+        return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
+      }
+
+      if (url.pathname === '/global-storage/stats' && request.method === 'GET') {
+        const row = this.ctx.storage.sql.exec("SELECT total_bytes FROM global_storage WHERE id = 'current'").toArray()[0];
+        const currentTotal = ((row?.total_bytes as number) || 0);
+        return new Response(JSON.stringify({
+          totalBytes: currentTotal,
+          maxBytes: MAX_GLOBAL_STORAGE_BYTES,
+          freeTierLimitBytes: 10 * 1024 * 1024 * 1024,
+          availableBytes: Math.max(0, MAX_GLOBAL_STORAGE_BYTES - currentTotal)
+        }), { headers: { 'Content-Type': 'application/json' } });
+      }
+    }
+
     if (request.method === 'POST' && url.pathname === '/init') {
       const { roomId, adminToken } = await request.json() as any;
       this.roomId = roomId;
       this.adminToken = adminToken;
+      const now = Date.now();
       
       this.ctx.storage.sql.exec('INSERT OR IGNORE INTO room (id, admin_token, status, created_at) VALUES (?, ?, ?, ?)', 
-        this.roomId, this.adminToken, 'active', Date.now());
+        this.roomId, this.adminToken, 'active', now);
+
+      // Auto-expire room after 2 hours hard lifetime to protect free tier storage
+      this.ctx.storage.setAlarm(now + MAX_ROOM_LIFETIME_MS);
         
       return new Response('OK');
     }
@@ -123,7 +183,7 @@ export class RoomDurableObject extends DurableObject {
       this.ctx.storage.sql.exec("UPDATE room SET status = 'ended' WHERE id = ?", this.roomId);
       setTimeout(() => {
         this.closeAll();
-        this.ctx.waitUntil(this.alarm());
+        this.ctx.waitUntil(this.destroyRoom());
       }, 100);
       return new Response('OK');
     }
@@ -190,17 +250,39 @@ export class RoomDurableObject extends DurableObject {
     }
     
     if (request.method === 'POST' && url.pathname === '/authorize-upload') {
-      const { sessionId, adminToken } = await request.json() as any;
+      const { sessionId, adminToken, size } = await request.json() as any;
       const roomRow = this.ctx.storage.sql.exec('SELECT * FROM room WHERE id = ? LIMIT 1', this.roomId).toArray()[0];
       if (!roomRow || roomRow.status !== 'active') return new Response('Unauthorized', { status: 403 });
 
-      if (adminToken === this.adminToken) return new Response('OK');
-      if (sessionId === 'host' || sessionId === 'admin') return new Response('OK');
-      if (sessionId) {
-        const p = this.getParticipant(sessionId);
-        if (p) return new Response('OK');
+      // Check room lifetime cap (2 hours)
+      if (Date.now() - ((roomRow.created_at as number) || 0) >= MAX_ROOM_LIFETIME_MS) {
+        return new Response(JSON.stringify({ error: 'Room has expired (2-hour free-tier duration limit reached)' }), { 
+          status: 410,
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
-      return new Response('Unauthorized', { status: 403 });
+
+      let isAuth = false;
+      if (adminToken === this.adminToken) isAuth = true;
+      if (!isAuth && (sessionId === 'host' || sessionId === 'admin')) isAuth = true;
+      if (!isAuth && sessionId) {
+        const p = this.getParticipant(sessionId);
+        if (p) isAuth = true;
+      }
+      if (!isAuth) return new Response('Unauthorized', { status: 403 });
+
+      // Enforce 2.5 GB max total storage per room
+      if (typeof size === 'number' && size > 0) {
+        const sizeRow = this.ctx.storage.sql.exec('SELECT COALESCE(SUM(size), 0) as total FROM files').toArray()[0];
+        const currentRoomTotal = ((sizeRow?.total as number) || 0);
+        if (currentRoomTotal + size > MAX_ROOM_STORAGE_BYTES) {
+          return new Response(JSON.stringify({ 
+            error: `Room storage limit exceeded. Max 2.5 GB allowed per room on free tier (currently ${(currentRoomTotal / (1024 * 1024)).toFixed(1)} MB used).` 
+          }), { status: 413, headers: { 'Content-Type': 'application/json' } });
+        }
+      }
+
+      return new Response('OK');
     }
 
     if (request.method === 'POST' && url.pathname.startsWith('/authorize-download/')) {
@@ -273,8 +355,15 @@ export class RoomDurableObject extends DurableObject {
         return new Response('Invalid object key for room', { status: 400 });
       }
 
-      if (typeof size !== 'number' || size <= 0 || size > 1024 * 1024 * 1024) {
+      if (typeof size !== 'number' || size <= 0 || size > MAX_FILE_SIZE_BYTES) {
         return new Response('Invalid file size', { status: 400 });
+      }
+
+      // Enforce 2.5 GB max total storage per room
+      const sizeRow = this.ctx.storage.sql.exec('SELECT COALESCE(SUM(size), 0) as total FROM files').toArray()[0];
+      const currentRoomTotal = ((sizeRow?.total as number) || 0);
+      if (currentRoomTotal + size > MAX_ROOM_STORAGE_BYTES) {
+        return new Response('Room storage quota exceeded (max 2.5 GB per room)', { status: 413 });
       }
 
       const file: FileMetadata = {
@@ -421,7 +510,7 @@ export class RoomDurableObject extends DurableObject {
           this.ctx.storage.sql.exec("UPDATE room SET status = 'ended' WHERE id = ?", this.roomId);
           setTimeout(() => {
             this.closeAll();
-            this.ctx.waitUntil(this.alarm());
+            this.ctx.waitUntil(this.destroyRoom());
           }, 100);
           break;
         }
@@ -471,38 +560,102 @@ export class RoomDurableObject extends DurableObject {
 
   async alarm() {
     this.ensureRoomLoaded();
-    const activeSockets = this.getAllWebSockets();
-    if (activeSockets.length > 0) {
-      // Participants reconnected during grace period, cancel destruction
+    const roomRow = this.ctx.storage.sql.exec('SELECT * FROM room LIMIT 1').toArray()[0];
+    if (!roomRow) {
       this.cleanupAlarmSet = false;
       return;
     }
 
-    console.log('[DO ALARM TRIGGERED - DESTROYING ROOM]', this.roomId);
-    const files = this.ctx.storage.sql.exec('SELECT object_key FROM files').toArray();
-    
-    if (files.length > 0) {
-      const aws = new AwsClient({
-        accessKeyId: this.env.R2_ACCESS_KEY_ID,
-        secretAccessKey: this.env.R2_SECRET_ACCESS_KEY,
-        service: 's3',
-        region: 'auto',
-      });
+    const now = Date.now();
+    const isMaxLifetimeReached = (now - ((roomRow.created_at as number) || now)) >= MAX_ROOM_LIFETIME_MS;
+    const activeSockets = this.getAllWebSockets();
 
-      for (const file of files) {
-        const objectKey = file.object_key as string;
-        const r2Url = new URL(`https://${this.env.R2_BUCKET_NAME}.${this.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com/${objectKey}`);
-        
-        try {
-          const req = await aws.sign(new Request(r2Url.toString(), { method: 'DELETE' }));
-          await fetch(req);
-        } catch (e) {
-          console.error('Failed to delete file from R2', e);
-        }
+    if (!isMaxLifetimeReached && activeSockets.length > 0) {
+      // Participants reconnected during grace period, cancel destruction
+      // Re-schedule alarm for max room lifetime
+      const remainingLifetime = Math.max(1000, ((roomRow.created_at as number) || now) + MAX_ROOM_LIFETIME_MS - now);
+      this.ctx.storage.setAlarm(now + remainingLifetime);
+      this.cleanupAlarmSet = false;
+      return;
+    }
+
+    if (isMaxLifetimeReached) {
+      console.log('[DO ALARM - 2-HOUR MAX LIFETIME REACHED - CLOSING ROOM]', this.roomId);
+      this.broadcast({ type: 'ROOM_ENDED' });
+      this.closeAll();
+    }
+
+    await this.destroyRoom();
+  }
+
+  private async destroyRoom() {
+    this.ensureRoomLoaded();
+    this.ctx.storage.sql.exec("UPDATE room SET status = 'ended' WHERE id = ?", this.roomId);
+
+    // 1. Calculate total size to release from global storage
+    const sizeRow = this.ctx.storage.sql.exec('SELECT COALESCE(SUM(size), 0) as total FROM files').toArray()[0];
+    const totalBytes = ((sizeRow?.total as number) || 0);
+
+    // 2. Delete all registered files in R2
+    const files = this.ctx.storage.sql.exec('SELECT object_key FROM files').toArray();
+    const aws = new AwsClient({
+      accessKeyId: this.env.R2_ACCESS_KEY_ID,
+      secretAccessKey: this.env.R2_SECRET_ACCESS_KEY,
+      service: 's3',
+      region: 'auto',
+    });
+
+    const deletedKeys = new Set<string>();
+
+    for (const file of files) {
+      const objectKey = file.object_key as string;
+      deletedKeys.add(objectKey);
+      const r2Url = new URL(`https://${this.env.R2_BUCKET_NAME}.${this.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com/${objectKey}`);
+      try {
+        const req = await aws.sign(new Request(r2Url.toString(), { method: 'DELETE' }));
+        await fetch(req);
+      } catch (e) {
+        console.error('Failed to delete file from R2', e);
       }
     }
 
-    // Cleanup all room data permanently
+    // Also list and delete any orphan/unregistered uploads under prefix rooms/${this.roomId}/
+    try {
+      const listUrl = new URL(`https://${this.env.R2_BUCKET_NAME}.${this.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com/?list-type=2&prefix=rooms/${this.roomId}/`);
+      const listReq = await aws.sign(new Request(listUrl.toString(), { method: 'GET' }));
+      const listRes = await fetch(listReq);
+      if (listRes.ok) {
+        const text = await listRes.text();
+        const keyMatches = text.match(/<Key>(.*?)<\/Key>/g);
+        if (keyMatches) {
+          for (const match of keyMatches) {
+            const key = match.replace(/<\/?Key>/g, '');
+            if (!deletedKeys.has(key)) {
+              const delUrl = new URL(`https://${this.env.R2_BUCKET_NAME}.${this.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com/${key}`);
+              const delReq = await aws.sign(new Request(delUrl.toString(), { method: 'DELETE' }));
+              await fetch(delReq);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to clean orphan objects from R2', e);
+    }
+
+    // 3. Release global storage
+    if (totalBytes > 0 && this.roomId !== '__GLOBAL_STORAGE__') {
+      try {
+        const globalId = this.env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
+        const globalDO = this.env.ROOM_DO.get(globalId);
+        await globalDO.fetch(new Request('http://do/global-storage/release', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ size: totalBytes })
+        }));
+      } catch (e) {}
+    }
+
+    // 4. Cleanup all SQLite tables
     this.ctx.storage.sql.exec('DELETE FROM room');
     this.ctx.storage.sql.exec('DELETE FROM participants');
     this.ctx.storage.sql.exec('DELETE FROM join_requests');
