@@ -95,6 +95,8 @@ export default function RoomPage({ params }: { params: { id: string } }) {
   const [activeReactionPickerId, setActiveReactionPickerId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
   const chatInputRef = useRef<HTMLInputElement>(null);
+  const emojiPickerRef = useRef<HTMLDivElement>(null);
+  const emojiButtonRef = useRef<HTMLButtonElement>(null);
 
   const [windowDragOver, setWindowDragOver] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState<File[] | null>(null);
@@ -122,23 +124,50 @@ export default function RoomPage({ params }: { params: { id: string } }) {
   }, []);
 
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
+    if (!showEmojiPicker && !activeReactionPickerId) return;
+
+    const handlePointerDown = (e: MouseEvent | TouchEvent) => {
       const target = e.target as HTMLElement;
-      if (!target?.closest?.('.reaction-picker-container')) {
+      if (activeReactionPickerId && !target?.closest?.('.reaction-picker-container')) {
         setActiveReactionPickerId(null);
       }
-      if (!target?.closest?.('.emoji-picker-container')) {
-        setShowEmojiPicker(false);
+      if (showEmojiPicker) {
+        const nodeTarget = e.target as Node;
+        if (
+          emojiPickerRef.current && !emojiPickerRef.current.contains(nodeTarget) &&
+          emojiButtonRef.current && !emojiButtonRef.current.contains(nodeTarget)
+        ) {
+          setShowEmojiPicker(false);
+        }
       }
     };
-    window.addEventListener('click', handleClickOutside);
-    return () => window.removeEventListener('click', handleClickOutside);
-  }, []);
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+    };
+  }, [activeReactionPickerId, showEmojiPicker]);
 
   const handleInsertEmoji = (emoji: string) => {
-    setMessageInput(prev => prev + emoji);
-    setShowEmojiPicker(false);
-    chatInputRef.current?.focus();
+    if (chatInputRef.current) {
+      const input = chatInputRef.current;
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? input.value.length;
+      const current = input.value;
+      const nextValue = current.slice(0, start) + emoji + current.slice(end);
+      setMessageInput(nextValue);
+      setShowEmojiPicker(false);
+      setTimeout(() => {
+        input.focus();
+        const nextPos = start + emoji.length;
+        input.setSelectionRange(nextPos, nextPos);
+      }, 0);
+    } else {
+      setMessageInput(prev => prev + emoji);
+      setShowEmojiPicker(false);
+    }
   };
 
   const handleReplyMessage = (msg: any) => {
@@ -1015,27 +1044,33 @@ export default function RoomPage({ params }: { params: { id: string } }) {
             {/* Quick Emoji Picker Button */}
             <div className="relative emoji-picker-container">
               <button
+                ref={emojiButtonRef}
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setShowEmojiPicker(!showEmojiPicker);
+                  setShowEmojiPicker(prev => !prev);
                 }}
-                className={`h-11 w-11 flex items-center justify-center rounded-xl text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--surface)] border border-[var(--line)] transition-all cursor-pointer ${showEmojiPicker ? 'text-[var(--fg)] bg-[var(--surface)] border-[var(--fg)]' : ''}`}
+                className={`h-11 w-11 flex items-center justify-center rounded-xl text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--surface)] border border-[var(--line)] transition-all cursor-pointer ${showEmojiPicker ? 'text-[var(--fg)] bg-[var(--surface)] border-[var(--fg)] shadow-xs' : ''}`}
                 title="Add emoji quickly"
+                aria-label="Add emoji quickly"
               >
-                <Smile className="w-4.5 h-4.5" />
+                <Smile className="w-5 h-5" />
               </button>
 
               {showEmojiPicker && (
-                <div className="absolute bottom-13 left-0 z-40 p-3 bg-[var(--bg)] border border-[var(--line)] rounded-2xl shadow-2xl w-68 animate-pop-in">
+                <div 
+                  ref={emojiPickerRef}
+                  className="absolute bottom-full mb-2 left-0 z-50 p-3 bg-[var(--bg)] border border-[var(--line)] rounded-2xl shadow-2xl w-72 max-w-[calc(100vw-2rem)] animate-pop-in"
+                >
                   <div className="flex items-center justify-between pb-2 mb-2 border-b border-[var(--line)]/60 text-[11px] font-mono text-[var(--faint)]">
                     <span>Quick Emojis</span>
                     <button
                       type="button"
                       onClick={() => setShowEmojiPicker(false)}
-                      className="hover:text-[var(--fg)] cursor-pointer"
+                      className="w-5 h-5 flex items-center justify-center rounded hover:text-[var(--fg)] hover:bg-[var(--hover)] transition-colors cursor-pointer"
+                      title="Close emoji picker"
                     >
-                      <X className="w-3 h-3" />
+                      <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
                   <div className="grid grid-cols-8 gap-1">
@@ -1044,7 +1079,8 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                         key={emoji}
                         type="button"
                         onClick={() => handleInsertEmoji(emoji)}
-                        className="w-7 h-7 flex items-center justify-center text-sm rounded-lg hover:bg-[var(--hover)] hover:scale-120 transition-transform cursor-pointer"
+                        className="w-7 h-7 flex items-center justify-center text-sm rounded-lg hover:bg-[var(--hover)] hover:scale-120 active:scale-95 transition-transform cursor-pointer"
+                        title={emoji}
                       >
                         {emoji}
                       </button>
