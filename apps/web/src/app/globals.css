@@ -318,3 +318,27 @@ body {
   animation: flashHighlight 1.4s ease-out;
 }
 
+/* DropBrand Moving Words Animations */
+@keyframes letterFloat {
+  0% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3.5px);
+  }
+  100% {
+    transform: translateY(1px);
+  }
+}
+
+@keyframes wordEntrance {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
