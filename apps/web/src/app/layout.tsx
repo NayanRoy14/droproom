@@ -1,18 +1,25 @@
 import type { Metadata } from "next";
-import { Inter, Source_Serif_4 } from "next/font/google";
+import localFont from "next/font/local";
+import { Source_Serif_4 } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({ 
-  subsets: ["latin"], 
-  display: "swap", 
-  variable: "--font-sans" 
+const geistSans = localFont({
+  src: "./fonts/GeistVF.woff",
+  variable: "--font-sans",
+  display: "swap",
 });
 
-const sourceSerif = Source_Serif_4({ 
-  subsets: ["latin"], 
-  style: ["normal", "italic"], 
-  display: "swap", 
-  variable: "--font-serif" 
+const geistMono = localFont({
+  src: "./fonts/GeistMonoVF.woff",
+  variable: "--font-mono",
+  display: "swap",
+});
+
+const sourceSerif = Source_Serif_4({
+  subsets: ["latin"],
+  style: ["normal", "italic"],
+  display: "swap",
+  variable: "--font-serif",
 });
 
 export const metadata: Metadata = {
@@ -31,8 +38,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${sourceSerif.variable}`}>
-      <body className="antialiased selection:bg-[var(--accent)] selection:text-[var(--bg)]">{children}</body>
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} ${sourceSerif.variable}`}>
+      <body className="antialiased selection:bg-[var(--accent)] selection:text-[var(--bg)] font-sans">{children}</body>
     </html>
   );
 }

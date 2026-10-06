@@ -1111,7 +1111,7 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                         {/* WhatsApp Reaction Badges floating on bubble edge */}
                         {msg.reactions && msg.reactions.length > 0 && (
                           <div className={`
-                            absolute -bottom-3 z-30 flex flex-wrap items-center gap-1
+                            absolute -bottom-3 z-30 flex flex-wrap items-center gap-1 animate-badge-pop
                             ${isMe ? 'right-2' : 'left-2'}
                           `}>
                             {msg.reactions.map(r => {
@@ -1125,7 +1125,7 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                                     toggleReaction(msg.id, 'message', r.emoji);
                                   }}
                                   className={`
-                                    inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-mono border transition-all cursor-pointer shadow-xs
+                                    inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-mono border transition-transform duration-150 active:scale-90 hover:scale-110 cursor-pointer shadow-xs select-none
                                     ${hasReacted 
                                       ? 'bg-[var(--surface)] border-[var(--accent)] text-[var(--fg)] font-semibold scale-105' 
                                       : 'bg-[var(--bg)] border-[var(--line)] text-[var(--muted)] hover:border-[var(--faint)] hover:text-[var(--fg)]'
