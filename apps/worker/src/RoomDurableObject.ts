@@ -142,8 +142,12 @@ export class RoomDurableObject extends DurableObject {
 
       if (url.pathname === '/global-storage/release' && request.method === 'POST') {
         const { size } = (await request.json().catch(() => ({}))) as any;
-        if (typeof size === 'number' && size > 0) {
-          this.ctx.storage.sql.exec("UPDATE global_storage SET total_bytes = MAX(0, total_bytes - ?) WHERE id = 'current'", size);
+        const releaseSize = Number(size) || 0;
+        if (releaseSize > 0) {
+          this.ctx.storage.sql.exec(
+            "UPDATE global_storage SET total_bytes = CASE WHEN total_bytes > ? THEN total_bytes - ? ELSE 0 END WHERE id = 'current'",
+            releaseSize, releaseSize
+          );
         }
         return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
       }
@@ -592,9 +596,23 @@ export class RoomDurableObject extends DurableObject {
     this.ensureRoomLoaded();
     this.ctx.storage.sql.exec("UPDATE room SET status = 'ended' WHERE id = ?", this.roomId);
 
-    // 1. Calculate total size to release from global storage
+    // 1. Calculate total size and release immediately from global storage
     const sizeRow = this.ctx.storage.sql.exec('SELECT COALESCE(SUM(size), 0) as total FROM files').toArray()[0];
-    const totalBytes = ((sizeRow?.total as number) || 0);
+    const totalBytes = Number(sizeRow?.total || 0);
+
+    if (totalBytes > 0 && this.roomId !== '__GLOBAL_STORAGE__') {
+      try {
+        const globalId = this.env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
+        const globalDO = this.env.ROOM_DO.get(globalId);
+        await globalDO.fetch(new Request('http://do/global-storage/release', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ size: totalBytes })
+        }));
+      } catch (e) {
+        console.error('Failed to release global storage in destroyRoom:', e);
+      }
+    }
 
     // 2. Delete all registered files in R2
     const files = this.ctx.storage.sql.exec('SELECT object_key FROM files').toArray();
@@ -642,20 +660,7 @@ export class RoomDurableObject extends DurableObject {
       console.error('Failed to clean orphan objects from R2', e);
     }
 
-    // 3. Release global storage
-    if (totalBytes > 0 && this.roomId !== '__GLOBAL_STORAGE__') {
-      try {
-        const globalId = this.env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
-        const globalDO = this.env.ROOM_DO.get(globalId);
-        await globalDO.fetch(new Request('http://do/global-storage/release', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ size: totalBytes })
-        }));
-      } catch (e) {}
-    }
-
-    // 4. Cleanup all SQLite tables
+    // 3. Cleanup all SQLite tables
     this.ctx.storage.sql.exec('DELETE FROM room');
     this.ctx.storage.sql.exec('DELETE FROM participants');
     this.ctx.storage.sql.exec('DELETE FROM join_requests');
