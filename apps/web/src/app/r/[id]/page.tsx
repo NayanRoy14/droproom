@@ -923,30 +923,34 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                         isDeleting ? 'animate-message-exit' : 'animate-message-enter'
                       }`}
                     >
-                      {/* WhatsApp Bubble Wrapper */}
+                      {/* Message Bubble Wrapper */}
                       <div className="relative max-w-[85%] sm:max-w-[70%] select-text">
                         <div className={`
                           relative px-3.5 py-2 text-[13.5px] leading-relaxed shadow-xs transition-colors
                           ${isMe 
-                            ? 'bg-[#dcf8c6] dark:bg-[#005c4b]/85 text-[#111b21] dark:text-[#e9edef] rounded-2xl rounded-tr-xs border border-[#c4eab0] dark:border-[#005c4b]' 
-                            : 'bg-[#ffffff] dark:bg-[#202c33] text-[#111b21] dark:text-[#e9edef] rounded-2xl rounded-tl-xs border border-[#e2e2e2] dark:border-[#2a3942]'
+                            ? 'bg-[var(--fg)] text-[var(--bg)] rounded-2xl rounded-tr-xs border border-[var(--fg)] dark:border-[#383a34]' 
+                            : 'bg-[var(--surface)] text-[var(--fg)] rounded-2xl rounded-tl-xs border border-[var(--line)] shadow-2xs'
                           }
                         `}>
                           {/* Sender Name for incoming group messages */}
                           {!isMe && (
-                            <div className="text-[11px] font-semibold text-[#008069] dark:text-[#53bdeb] mb-1 leading-none select-none">
+                            <div className="text-[11px] font-semibold text-[var(--accent)] mb-1 leading-none select-none">
                               {msg.senderName}
                             </div>
                           )}
 
-                          {/* WhatsApp Quoted Reply Header */}
+                          {/* Quoted Reply Header */}
                           {msg.replyTo && (
                             <div 
                               onClick={() => handleScrollToItem(msg.replyTo!.id)}
-                              className="mb-1.5 p-2 rounded-lg text-[11px] leading-snug cursor-pointer bg-black/5 dark:bg-black/25 border-l-[3.5px] border-[#008069] dark:border-[#53bdeb] hover:opacity-85 transition-opacity select-none text-left"
+                              className={`mb-1.5 p-2 rounded-lg text-[11px] leading-snug cursor-pointer border-l-[3.5px] hover:opacity-85 transition-opacity select-none text-left ${
+                                isMe 
+                                  ? 'bg-[var(--bg)]/15 border-[var(--bg)] text-[var(--bg)]' 
+                                  : 'bg-[var(--bg)] border-[var(--accent)] text-[var(--fg)]'
+                              }`}
                               title="Click to jump to quoted item"
                             >
-                              <div className="flex items-center gap-1 font-semibold text-[#008069] dark:text-[#53bdeb] text-[11px]">
+                              <div className={`flex items-center gap-1 font-semibold text-[11px] ${isMe ? 'text-[var(--bg)]' : 'text-[var(--accent)]'}`}>
                                 {msg.replyTo.type === 'file' ? (
                                   <>
                                     <FileText className="w-3 h-3 shrink-0" />
@@ -959,24 +963,26 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                                   </>
                                 )}
                               </div>
-                              <p className="text-[10px] text-[#667781] dark:text-[#8696a0] truncate mt-0.5 font-normal">
+                              <p className={`text-[10px] truncate mt-0.5 font-normal ${isMe ? 'text-[var(--bg)]/80' : 'text-[var(--muted)]'}`}>
                                 {msg.replyTo.preview}
                               </p>
                             </div>
                           )}
 
                           {/* Message Content & Timestamp */}
-                          <div className="break-words whitespace-pre-wrap pr-4">
+                          <div className="break-words whitespace-pre-wrap pr-5">
                             {msg.message}
                             
-                            {/* WhatsApp bottom-right metadata (Time + Double Blue Checkmark) */}
-                            <span className="float-right ml-2.5 mt-1 inline-flex items-center gap-1 text-[10px] text-[#667781] dark:text-[#8696a0] select-none pointer-events-none tabular-nums font-mono leading-none">
+                            {/* Bottom-right metadata (Time + Double Blue Checkmark) */}
+                            <span className={`float-right ml-2.5 mt-1 inline-flex items-center gap-1 text-[10px] select-none pointer-events-none tabular-nums font-mono leading-none ${
+                              isMe ? 'text-[var(--bg)]/70' : 'text-[var(--muted)]'
+                            }`}>
                               {formatTime(msg.timestamp)}
-                              {isMe && <CheckCheck className="w-3.5 h-3.5 text-[#53bdeb]" />}
+                              {isMe && <CheckCheck className="w-3.5 h-3.5 text-[var(--accent)]" />}
                             </span>
                           </div>
 
-                          {/* WhatsApp Hover Chevron Arrow */}
+                          {/* Hover Chevron Arrow */}
                           <button
                             type="button"
                             onClick={(e) => {
@@ -985,9 +991,12 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                             }}
                             className={`
                               absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded-full 
-                              bg-black/10 dark:bg-black/30 hover:bg-black/20 dark:hover:bg-white/20 
-                              text-[var(--fg)] transition-all cursor-pointer z-10
-                              ${activeMenuMessageId === msg.id ? 'opacity-100 bg-black/20' : 'opacity-0 group-hover:opacity-100 max-sm:opacity-60'}
+                              transition-all cursor-pointer z-10
+                              ${isMe 
+                                ? 'bg-[var(--bg)]/20 hover:bg-[var(--bg)]/35 text-[var(--bg)]' 
+                                : 'bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 text-[var(--fg)]'
+                              }
+                              ${activeMenuMessageId === msg.id ? 'opacity-100 scale-105' : 'opacity-0 group-hover:opacity-100 max-sm:opacity-60'}
                             `}
                             title="Message options"
                             aria-label="Message options"
@@ -995,13 +1004,13 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                             <ChevronDown className="w-3.5 h-3.5" />
                           </button>
 
-                          {/* WhatsApp Message Context Menu Dropdown */}
+                          {/* Message Context Menu Dropdown */}
                           {activeMenuMessageId === msg.id && (
                             <div 
                               className={`
-                                absolute top-7 z-50 w-44 p-1.5 bg-[var(--bg)] border border-[var(--line)] 
-                                rounded-xl shadow-xl animate-pop-in space-y-0.5 text-xs text-[var(--fg)] select-none
-                                ${isMe ? 'right-0' : 'left-0 sm:left-auto sm:right-0'}
+                                absolute top-7 z-50 w-52 min-w-[210px] p-1.5 bg-[var(--surface)] border border-[var(--line)] 
+                                rounded-xl shadow-2xl animate-pop-in space-y-0.5 text-xs text-[var(--fg)] select-none
+                                ${isMe ? 'right-0' : 'left-0'}
                               `}
                               onClick={e => e.stopPropagation()}
                             >
@@ -1012,10 +1021,10 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                                   handleReplyMessage(msg);
                                   setActiveMenuMessageId(null);
                                 }}
-                                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[var(--surface)] text-left cursor-pointer transition-colors"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--hover)] text-left cursor-pointer transition-colors"
                               >
-                                <Reply className="w-3.5 h-3.5 text-[var(--accent)]" />
-                                <span>Reply</span>
+                                <Reply className="w-4 h-4 text-[var(--accent)] shrink-0" />
+                                <span className="whitespace-nowrap font-medium">Reply</span>
                               </button>
 
                               {/* React option */}
@@ -1025,27 +1034,27 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                                   setActiveReactionPickerId(activeReactionPickerId === msg.id ? null : msg.id);
                                   setActiveMenuMessageId(null);
                                 }}
-                                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[var(--surface)] text-left cursor-pointer transition-colors"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--hover)] text-left cursor-pointer transition-colors"
                               >
-                                <Smile className="w-3.5 h-3.5 text-amber-500" />
-                                <span>React with emoji</span>
+                                <Smile className="w-4 h-4 text-amber-500 shrink-0" />
+                                <span className="whitespace-nowrap font-medium">React with emoji</span>
                               </button>
 
                               {/* Copy option */}
                               <button
                                 type="button"
                                 onClick={() => handleCopyMessageText(msg.id, msg.message)}
-                                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[var(--surface)] text-left cursor-pointer transition-colors"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--hover)] text-left cursor-pointer transition-colors"
                               >
                                 {copiedMessageId === msg.id ? (
                                   <>
-                                    <Check className="w-3.5 h-3.5 text-[var(--success)]" />
-                                    <span className="text-[var(--success)] font-medium">Copied!</span>
+                                    <Check className="w-4 h-4 text-[var(--success)] shrink-0" />
+                                    <span className="whitespace-nowrap font-medium text-[var(--success)]">Copied!</span>
                                   </>
                                 ) : (
                                   <>
-                                    <Copy className="w-3.5 h-3.5 text-[var(--muted)]" />
-                                    <span>Copy text</span>
+                                    <Copy className="w-4 h-4 text-[var(--muted)] shrink-0" />
+                                    <span className="whitespace-nowrap font-medium">Copy text</span>
                                   </>
                                 )}
                               </button>
@@ -1055,10 +1064,10 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                                 <button
                                   type="button"
                                   onClick={() => handleDeleteMessageWithAnim(msg.id)}
-                                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[var(--danger)] hover:bg-[var(--danger-bg)] text-left cursor-pointer transition-colors border-t border-[var(--line)]/60 pt-1.5 mt-0.5"
+                                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[var(--danger)] hover:bg-[var(--danger-bg)] text-left cursor-pointer transition-colors border-t border-[var(--line)]/60 pt-2 mt-1"
                                 >
-                                  <Trash2 className="w-3.5 h-3.5 text-[var(--danger)]" />
-                                  <span>Delete for everyone</span>
+                                  <Trash2 className="w-4 h-4 text-[var(--danger)] shrink-0" />
+                                  <span className="whitespace-nowrap font-medium">Delete for everyone</span>
                                 </button>
                               )}
                             </div>
@@ -1107,7 +1116,7 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                                   className={`
                                     inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-mono border transition-all cursor-pointer shadow-2xs
                                     ${hasReacted 
-                                      ? 'bg-[var(--bg)] border-[#008069] dark:border-[#53bdeb] text-[var(--fg)] font-semibold scale-105' 
+                                      ? 'bg-[var(--surface)] border-[var(--accent)] text-[var(--fg)] font-semibold scale-105' 
                                       : 'bg-[var(--bg)] border-[var(--line)] text-[var(--muted)] hover:border-[var(--faint)] hover:text-[var(--fg)]'
                                     }
                                   `}
@@ -1146,17 +1155,17 @@ export default function RoomPage({ params }: { params: { id: string } }) {
 
         {/* Message Input Composer */}
         <div className="p-4 sm:p-5 border-t border-[var(--line)] bg-[var(--bg)]/95 backdrop-blur-md shrink-0 z-10">
-          {/* Active Reply Banner (WhatsApp style with left accent bar) */}
+          {/* Active Reply Banner */}
           {replyingTo && (
-            <div className="flex items-center justify-between px-3 py-2 bg-[var(--surface)] border-l-4 border-[#008069] dark:border-[#53bdeb] border-y border-r border-[var(--line)] rounded-r-xl mb-2.5 text-xs animate-pop-in shadow-2xs">
+            <div className="flex items-center justify-between px-3 py-2 bg-[var(--surface)] border-l-4 border-[var(--accent)] border-y border-r border-[var(--line)] rounded-r-xl mb-2.5 text-xs animate-pop-in shadow-2xs">
               <div className="flex items-center gap-2 min-w-0">
                 {replyingTo.type === 'file' ? (
-                  <FileText className="w-3.5 h-3.5 text-[#008069] dark:text-[#53bdeb] shrink-0" />
+                  <FileText className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />
                 ) : (
-                  <Reply className="w-3.5 h-3.5 text-[#008069] dark:text-[#53bdeb] shrink-0" />
+                  <Reply className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />
                 )}
                 <div className="truncate text-xs">
-                  <span className="font-semibold text-[#008069] dark:text-[#53bdeb]">
+                  <span className="font-semibold text-[var(--accent)]">
                     {replyingTo.type === 'file' ? 'Referencing file: ' : 'Replying to '}
                     {replyingTo.name}
                   </span>
@@ -1212,8 +1221,8 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                   {/* Top Header & Close */}
                   <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[var(--line)]/60 text-xs font-medium text-[var(--fg)]">
                     <div className="flex items-center gap-1.5">
-                      <Smile className="w-4 h-4 text-[#008069] dark:text-[#53bdeb]" />
-                      <span>WhatsApp Emojis</span>
+                      <Smile className="w-4 h-4 text-[var(--accent)]" />
+                      <span>Emojis</span>
                     </div>
                     <button
                       type="button"
