@@ -48,15 +48,22 @@ export function LocalRoomsModal({ isOpen, onClose, onJoinRoom, onCreateRoom }: L
   };
 
   useEffect(() => {
-    if (isOpen) {
-      scanRooms();
-    }
-  }, [isOpen]);
+    if (!isOpen) return;
+    scanRooms();
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45 backdrop-blur-xs animate-settle">
+    <div 
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45 backdrop-blur-xs animate-settle"
+    >
       <div 
         className="w-full max-w-[420px] rounded-2xl bg-[var(--bg)] border border-[var(--line)] shadow-2xl p-5 sm:p-6 animate-pop-in space-y-4"
         onClick={e => e.stopPropagation()}

@@ -6,8 +6,16 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    const corsHeaders = {
-      'Access-Control-Allow-Origin': env.FRONTEND_URL || '*',
+    const reqOrigin = request.headers.get('Origin') || '';
+    const isAllowed = !env.FRONTEND_URL ||
+      reqOrigin.includes('localhost') ||
+      reqOrigin.includes('127.0.0.1') ||
+      reqOrigin.endsWith('.vercel.app') ||
+      reqOrigin === env.FRONTEND_URL;
+    const allowedOrigin = isAllowed && reqOrigin ? reqOrigin : (env.FRONTEND_URL || '*');
+
+    const corsHeaders: Record<string, string> = {
+      'Access-Control-Allow-Origin': allowedOrigin,
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
     };

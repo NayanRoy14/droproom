@@ -190,7 +190,7 @@ export default function RoomPage({ params }: { params: { id: string } }) {
       if (activeMenuMessageId && !target?.closest?.('.group')) {
         setActiveMenuMessageId(null);
       }
-      if (activeReactionPickerId && !target?.closest?.('.reaction-picker-container')) {
+      if (activeReactionPickerId && !target?.closest?.('.reaction-picker-container') && !target?.closest?.('.reaction-trigger')) {
         setActiveReactionPickerId(null);
       }
       if (showEmojiPicker) {
@@ -256,11 +256,14 @@ export default function RoomPage({ params }: { params: { id: string } }) {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedMessageId(id);
-      setTimeout(() => setCopiedMessageId(null), 1800);
+      setTimeout(() => {
+        setCopiedMessageId(null);
+        setActiveMenuMessageId(null);
+      }, 700);
     } catch (e) {
       console.error('Failed to copy text', e);
+      setActiveMenuMessageId(null);
     }
-    setActiveMenuMessageId(null);
   };
 
   const handleDeleteMessageWithAnim = (id: string) => {
@@ -870,7 +873,7 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                     {file.reactions && file.reactions.length > 0 && (
                       <div className="flex flex-wrap items-center gap-1 pl-12">
                         {file.reactions.map(r => {
-                          const hasReacted = sessionId ? r.userIds.includes(sessionId) || (isAdmin && r.userIds.includes('host')) : false;
+                          const hasReacted = Boolean((sessionId && r.userIds.includes(sessionId)) || (isAdmin && r.userIds.includes('host')));
                           return (
                             <button
                               key={r.emoji}
@@ -912,14 +915,15 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                   const canDelete = isMe && (currentTime - msg.timestamp <= 120_000);
                   const isHighlighted = highlightedItemId === msg.id;
                   const isDeleting = deletingMessageId === msg.id;
+                  const hasReactions = Boolean(msg.reactions && msg.reactions.length > 0);
 
                   return (
                     <div 
                       id={`item-${msg.id}`}
                       key={msg.id} 
-                      className={`group relative flex flex-col mb-2.5 transition-all ${
+                      className={`group relative flex flex-col transition-all ${
                         isMe ? 'items-end' : 'items-start'
-                      } ${isHighlighted ? 'animate-flash-highlight rounded-2xl' : ''} ${
+                      } ${hasReactions ? 'mb-5' : 'mb-2.5'} ${isHighlighted ? 'animate-flash-highlight rounded-2xl' : ''} ${
                         isDeleting ? 'animate-message-exit' : 'animate-message-enter'
                       }`}
                     >
@@ -970,7 +974,7 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                           )}
 
                           {/* Message Content & Timestamp */}
-                          <div className="break-words whitespace-pre-wrap pr-5">
+                          <div className="break-words whitespace-pre-wrap pr-7">
                             {msg.message}
                             
                             {/* Bottom-right metadata (Time + Double Blue Checkmark) */}
@@ -1030,11 +1034,12 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                               {/* React option */}
                               <button
                                 type="button"
-                                onClick={() => {
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   setActiveReactionPickerId(activeReactionPickerId === msg.id ? null : msg.id);
                                   setActiveMenuMessageId(null);
                                 }}
-                                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--hover)] text-left cursor-pointer transition-colors"
+                                className="reaction-trigger w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--hover)] text-left cursor-pointer transition-colors"
                               >
                                 <Smile className="w-4 h-4 text-amber-500 shrink-0" />
                                 <span className="whitespace-nowrap font-medium">React with emoji</span>
@@ -1078,20 +1083,23 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                         {activeReactionPickerId === msg.id && (
                           <div 
                             className={`
-                              absolute -top-10 z-40 flex items-center gap-1 bg-[var(--bg)] border border-[var(--line)] shadow-xl rounded-full p-1 animate-pop-in
+                              reaction-picker-container absolute -top-11 z-50 flex items-center gap-1 bg-[var(--bg)] border border-[var(--line)] shadow-2xl rounded-full p-1.5 animate-pop-in
                               ${isMe ? 'right-0' : 'left-0'}
                             `}
                             onClick={e => e.stopPropagation()}
+                            onMouseDown={e => e.stopPropagation()}
+                            onTouchStart={e => e.stopPropagation()}
                           >
                             {QUICK_EMOJIS.map(emoji => (
                               <button
                                 key={emoji}
                                 type="button"
-                                onClick={() => {
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   toggleReaction(msg.id, 'message', emoji);
                                   setActiveReactionPickerId(null);
                                 }}
-                                className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-[var(--hover)] hover:scale-120 transition-transform cursor-pointer text-sm"
+                                className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-[var(--hover)] hover:scale-125 transition-transform cursor-pointer text-sm"
                                 title={emoji}
                               >
                                 {emoji}
@@ -1103,18 +1111,21 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                         {/* WhatsApp Reaction Badges floating on bubble edge */}
                         {msg.reactions && msg.reactions.length > 0 && (
                           <div className={`
-                            absolute -bottom-2.5 z-20 flex flex-wrap items-center gap-1
+                            absolute -bottom-3 z-30 flex flex-wrap items-center gap-1
                             ${isMe ? 'right-2' : 'left-2'}
                           `}>
                             {msg.reactions.map(r => {
-                              const hasReacted = sessionId ? r.userIds.includes(sessionId) || (isAdmin && r.userIds.includes('host')) : false;
+                              const hasReacted = Boolean((sessionId && r.userIds.includes(sessionId)) || (isAdmin && r.userIds.includes('host')));
                               return (
                                 <button
                                   key={r.emoji}
                                   type="button"
-                                  onClick={() => toggleReaction(msg.id, 'message', r.emoji)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleReaction(msg.id, 'message', r.emoji);
+                                  }}
                                   className={`
-                                    inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-mono border transition-all cursor-pointer shadow-2xs
+                                    inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-mono border transition-all cursor-pointer shadow-xs
                                     ${hasReacted 
                                       ? 'bg-[var(--surface)] border-[var(--accent)] text-[var(--fg)] font-semibold scale-105' 
                                       : 'bg-[var(--bg)] border-[var(--line)] text-[var(--muted)] hover:border-[var(--faint)] hover:text-[var(--fg)]'
