@@ -270,10 +270,21 @@ export class RoomDurableObject extends DurableObject {
 
       this.broadcast({ type: 'ROOM_ENDED' });
       this.ctx.storage.sql.exec("UPDATE room SET status = 'ended' WHERE id = ?", this.roomId);
+
+      try {
+        const globalId = this.env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
+        const globalDO = this.env.ROOM_DO.get(globalId);
+        await globalDO.fetch(new Request('http://do/global-discovery/deregister', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ roomId: this.roomId })
+        }));
+      } catch (e) {}
+
       setTimeout(() => {
         this.closeAll();
         this.ctx.waitUntil(this.destroyRoom());
-      }, 100);
+      }, 1500);
       return new Response('OK');
     }
 
@@ -695,10 +706,19 @@ export class RoomDurableObject extends DurableObject {
           if (!session.isAdmin) return;
           this.broadcast({ type: 'ROOM_ENDED' });
           this.ctx.storage.sql.exec("UPDATE room SET status = 'ended' WHERE id = ?", this.roomId);
+          try {
+            const globalId = this.env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
+            const globalDO = this.env.ROOM_DO.get(globalId);
+            this.ctx.waitUntil(globalDO.fetch(new Request('http://do/global-discovery/deregister', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ roomId: this.roomId })
+            })));
+          } catch (e) {}
           setTimeout(() => {
             this.closeAll();
             this.ctx.waitUntil(this.destroyRoom());
-          }, 100);
+          }, 1500);
           break;
         }
         
