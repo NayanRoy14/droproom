@@ -49,7 +49,10 @@ export default function Home() {
       
       {/* Top Header */}
       <header className="w-full max-w-[480px] sm:max-w-[520px] mx-auto flex items-center justify-between">
-        <DropBrand showLogo logoSize={22} className="text-base" />
+        <div className="flex items-center gap-2.5">
+          <DropLogo size={22} className="w-5.5 h-5.5 shrink-0" />
+          <span className="font-serif italic text-base tracking-tight">DropXYZ</span>
+        </div>
         <ThemeToggle />
       </header>
 

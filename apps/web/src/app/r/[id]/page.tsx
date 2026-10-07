@@ -5,7 +5,6 @@ import { useRoom } from '@/lib/useRoom';
 import { FileUpload } from '@/components/FileUpload';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { DropLogo } from '@/components/DropLogo';
-import { DropBrand } from '@/components/DropBrand';
 import { 
   Users, Check, X, LogOut, Send, AlertCircle, 
   FileText, Copy, CheckCheck, Image as ImageIcon, 
@@ -615,7 +614,8 @@ export default function RoomPage({ params }: { params: { id: string } }) {
         <div className="w-full max-w-[380px] p-8 sm:p-9 rounded-2xl border border-[var(--line)] bg-[var(--surface)]/20 text-center space-y-6 shadow-sm">
           <div className="space-y-1.5">
             <div className="flex items-center justify-center gap-2 mb-2">
-              <DropBrand showLogo logoSize={20} className="text-sm text-[var(--muted)]" />
+              <DropLogo size={20} className="w-5 h-5 shrink-0 opacity-80" />
+              <span className="font-serif italic text-sm text-[var(--muted)] tracking-tight">DropXYZ</span>
             </div>
             <h2 className="font-serif italic font-normal text-3xl sm:text-4xl tracking-tight">Join Room</h2>
             <p className="text-xs sm:text-sm text-[var(--muted)]">Enter your name to request admission</p>
@@ -656,13 +656,14 @@ export default function RoomPage({ params }: { params: { id: string } }) {
         {/* Top Header */}
         <header className="h-15 sm:h-16 flex items-center justify-between px-3 sm:px-6 border-b border-[var(--line)] bg-[var(--bg)]/90 backdrop-blur-md shrink-0 z-10">
           <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 shrink-0">
-            <DropBrand 
-              showLogo 
-              logoSize={20} 
-              className="text-base" 
-              hideTextOnMobile
+            <button 
               onClick={() => router.push('/')} 
-            />
+              className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer shrink-0" 
+              title="Return to DropXYZ"
+            >
+              <DropLogo size={20} className="w-5 h-5 shrink-0" />
+              <span className="font-serif italic text-base tracking-tight hidden sm:inline">DropXYZ</span>
+            </button>
             <span className="hidden sm:inline text-xs text-[var(--line)] select-none">/</span>
             <button
               onClick={() => setShowQRModal(true)}

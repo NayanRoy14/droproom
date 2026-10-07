@@ -117,6 +117,28 @@ export function DropBrand({
     };
   }, []);
 
+  if (!interactive) {
+    return (
+      <Component
+        onClick={onClick}
+        className={`inline-flex items-center select-none shrink-0 ${onClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${className}`}
+        title="DropXYZ"
+      >
+        {showLogo && (
+          <DropLogo 
+            size={logoSize} 
+            className="mr-2 shrink-0" 
+          />
+        )}
+        <span className={`items-center overflow-visible ${hideTextOnMobile ? 'hidden sm:inline-flex' : 'inline-flex'}`}>
+          <span className="font-serif italic tracking-tight shrink-0">
+            DropXYZ
+          </span>
+        </span>
+      </Component>
+    );
+  }
+
   return (
     <Component
       onMouseEnter={startAnimation}
