@@ -1,5 +1,6 @@
 import { Env } from './types';
 import { AwsClient } from 'aws4fetch';
+import { MAX_FILE_SIZE_BYTES } from '@droproom/shared';
 export { RoomDurableObject } from './RoomDurableObject';
 
 export default {
@@ -31,6 +32,16 @@ export default {
         const statsRes = await globalDO.fetch(new Request('http://do/global-storage/stats'));
         return new Response(statsRes.body, {
           status: statsRes.status,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (request.method === 'POST' && url.pathname === '/api/storage-reconcile') {
+        const globalId = env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
+        const globalDO = env.ROOM_DO.get(globalId);
+        const reconcileRes = await globalDO.fetch(new Request('http://do/global-storage/reconcile', { method: 'POST' }));
+        return new Response(reconcileRes.body, {
+          status: reconcileRes.status,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
@@ -106,25 +117,11 @@ export default {
           if (typeof size !== 'number' || size <= 0) {
             return new Response(JSON.stringify({ error: 'Invalid file size' }), { status: 400, headers: corsHeaders });
           }
-          if (size > 1024 * 1024 * 1024) {
+          if (size > MAX_FILE_SIZE_BYTES) {
             return new Response(JSON.stringify({ error: 'File too large (max 1 GB per file)' }), { status: 413, headers: corsHeaders });
           }
 
-          // 1. Check Global Storage Ceiling (8 GB safe buffer below 10 GB free tier)
-          const globalId = env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
-          const globalDO = env.ROOM_DO.get(globalId);
-          const globalRes = await globalDO.fetch(new Request('http://do/global-storage/reserve', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ size })
-          }));
-
-          if (!globalRes.ok) {
-            const errData = await globalRes.json().catch(() => ({}));
-            return new Response(JSON.stringify(errData), { status: globalRes.status, headers: corsHeaders });
-          }
-
-          // 2. Authorize via DO & Enforce 2.5 GB Room Quota
+          // 1. Authorize via Room DO first (room lifetime, room quota, participant permissions)
           const id = env.ROOM_DO.idFromName(roomId);
           const roomDO = env.ROOM_DO.get(id);
           const authRes = await roomDO.fetch(new Request('http://do/authorize-upload', {
@@ -140,34 +137,85 @@ export default {
             return new Response(JSON.stringify(parsedErr), { status: authRes.status, headers: corsHeaders });
           }
 
+          // 2. Atomic Global Storage Reservation Check & Hold
           const fileId = crypto.randomUUID();
+          const globalId = env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
+          const globalDO = env.ROOM_DO.get(globalId);
+          const globalRes = await globalDO.fetch(new Request('http://do/global-storage/reserve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ roomId, fileId, userId: sessionId || (adminToken ? 'admin' : 'anonymous'), size })
+          }));
+
+          if (!globalRes.ok) {
+            const errData = await globalRes.json().catch(() => ({}));
+            return new Response(JSON.stringify(errData), { status: globalRes.status, headers: corsHeaders });
+          }
+
+          const reservationData = await globalRes.json() as any;
+          const reservationId = reservationData.reservationId;
+
+          // 3. Generate Presigned URL
           const rawName = filename.split(/[/\\]/).pop() || 'file';
           const safeFilename = rawName.replace(/[^a-zA-Z0-9.-]/g, '_').replace(/\.{2,}/g, '_') || 'file';
           const objectKey = `rooms/${roomId}/${fileId}/${safeFilename}`;
 
-          const aws = new AwsClient({
-            accessKeyId: env.R2_ACCESS_KEY_ID,
-            secretAccessKey: env.R2_SECRET_ACCESS_KEY,
-            service: 's3',
-            region: 'auto',
-          });
+          try {
+            const aws = new AwsClient({
+              accessKeyId: env.R2_ACCESS_KEY_ID,
+              secretAccessKey: env.R2_SECRET_ACCESS_KEY,
+              service: 's3',
+              region: 'auto',
+            });
 
-          const r2Url = new URL(`https://${env.R2_BUCKET_NAME}.${env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com/${objectKey}`);
-          r2Url.searchParams.set('X-Amz-Expires', '900'); // 15 minutes
-          
-          const signed = await aws.sign(new Request(r2Url.toString(), {
-            method: 'PUT',
-            headers: {
-              'Content-Type': typeof mimeType === 'string' && mimeType ? mimeType : 'application/octet-stream'
-            }
-          }), { aws: { signQuery: true } });
+            const r2Url = new URL(`https://${env.R2_BUCKET_NAME}.${env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com/${objectKey}`);
+            r2Url.searchParams.set('X-Amz-Expires', '900'); // 15 minutes
+            
+            const signed = await aws.sign(new Request(r2Url.toString(), {
+              method: 'PUT',
+              headers: {
+                'Content-Type': typeof mimeType === 'string' && mimeType ? mimeType : 'application/octet-stream'
+              }
+            }), { aws: { signQuery: true } });
 
-          return new Response(JSON.stringify({
-            uploadUrl: signed.url,
-            fileId,
-            objectKey,
-            originalName: rawName
-          }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            return new Response(JSON.stringify({
+              uploadUrl: signed.url,
+              fileId,
+              reservationId,
+              objectKey,
+              originalName: rawName
+            }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+          } catch (signingErr: any) {
+            // Rollback reservation if presigning failed
+            try {
+              await globalDO.fetch(new Request('http://do/global-storage/release-reservation', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reservationId, fileId })
+              }));
+            } catch (e) {}
+            return new Response(JSON.stringify({ error: 'Failed to generate upload URL' }), {
+              status: 500,
+              headers: corsHeaders
+            });
+          }
+        }
+
+        if (request.method === 'POST' && path === '/upload-cancel') {
+          const body = await request.json().catch(() => ({})) as any;
+          const { fileId, reservationId } = body || {};
+          if (fileId || reservationId) {
+            try {
+              const globalId = env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
+              const globalDO = env.ROOM_DO.get(globalId);
+              await globalDO.fetch(new Request('http://do/global-storage/release-reservation', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reservationId, fileId })
+              }));
+            } catch (e) {}
+          }
+          return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
 
         if (request.method === 'POST' && path.startsWith('/download-url/')) {
@@ -217,36 +265,110 @@ export default {
         
         if (request.method === 'POST' && path === '/file-complete') {
           const payload = await request.json() as any;
-          
+          if (!payload || typeof payload !== 'object') {
+            return new Response(JSON.stringify({ error: 'Invalid request body' }), { status: 400, headers: corsHeaders });
+          }
+
+          const { fileId, reservationId, objectKey, originalName, mimeType, participantId, adminToken, sessionId } = payload;
+          if (!fileId || !objectKey) {
+            return new Response(JSON.stringify({ error: 'fileId and objectKey are required' }), { status: 400, headers: corsHeaders });
+          }
+
+          if (!objectKey.startsWith(`rooms/${roomId}/${fileId}/`)) {
+            return new Response(JSON.stringify({ error: 'Invalid object key for this room' }), { status: 400, headers: corsHeaders });
+          }
+
+          // 1. Authoritative check: verify R2 object exists and inspect Content-Length
+          const aws = new AwsClient({
+            accessKeyId: env.R2_ACCESS_KEY_ID,
+            secretAccessKey: env.R2_SECRET_ACCESS_KEY,
+            service: 's3',
+            region: 'auto',
+          });
+
+          let actualSize = 0;
+          try {
+            const headUrl = new URL(`https://${env.R2_BUCKET_NAME}.${env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com/${objectKey}`);
+            const headReq = await aws.sign(new Request(headUrl.toString(), { method: 'HEAD' }));
+            const headRes = await fetch(headReq);
+            if (!headRes.ok) {
+              return new Response(JSON.stringify({ error: 'Uploaded object not found in R2 storage' }), { status: 400, headers: corsHeaders });
+            }
+            const cl = headRes.headers.get('content-length');
+            actualSize = cl ? parseInt(cl, 10) : 0;
+            if (!actualSize || actualSize <= 0) {
+              return new Response(JSON.stringify({ error: 'Empty or invalid file in R2 storage' }), { status: 400, headers: corsHeaders });
+            }
+          } catch (headErr: any) {
+            return new Response(JSON.stringify({ error: 'Failed to verify object in storage' }), { status: 500, headers: corsHeaders });
+          }
+
+          // 2. Commit storage reservation atomically inside global DO
+          const globalId = env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
+          const globalDO = env.ROOM_DO.get(globalId);
+          if (reservationId) {
+            const commitRes = await globalDO.fetch(new Request('http://do/global-storage/commit', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ reservationId, fileId, roomId, actualBytes: actualSize })
+            }));
+
+            if (!commitRes.ok) {
+              const commitErr = await commitRes.json().catch(() => ({}));
+              return new Response(JSON.stringify(commitErr), { status: commitRes.status, headers: corsHeaders });
+            }
+          } else {
+            await globalDO.fetch(new Request('http://do/global-storage/record', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ size: actualSize })
+            }));
+          }
+
+          // 3. Forward to Room DO to record in room DB and broadcast FILE_SHARED
           const id = env.ROOM_DO.idFromName(roomId);
           const roomDO = env.ROOM_DO.get(id);
-          
-          const doUrl = new URL(request.url);
-          doUrl.pathname = '/file-complete';
-          
-          const doReq = new Request(doUrl.toString(), {
+          const doRes = await roomDO.fetch(new Request('http://do/file-complete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-          const response = await roomDO.fetch(doReq);
+            body: JSON.stringify({
+              fileId,
+              objectKey,
+              originalName,
+              size: actualSize,
+              mimeType,
+              participantId,
+              adminToken,
+              sessionId
+            })
+          }));
 
-          if (response.ok && typeof payload?.size === 'number' && payload.size > 0) {
-            try {
-              const globalId = env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
-              const globalDO = env.ROOM_DO.get(globalId);
-              await globalDO.fetch(new Request('http://do/global-storage/record', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ size: payload.size })
-              }));
-            } catch (e) {
-              console.error('Failed to record global storage', e);
-            }
+          if (!doRes.ok) {
+            const errText = await doRes.text();
+            return new Response(errText, { status: doRes.status, headers: corsHeaders });
           }
-          
-          return new Response(response.body, {
-            status: response.status,
+
+          return new Response(JSON.stringify({ ok: true, fileId, size: actualSize }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const deleteMatch = path.match(/^\/files\/([a-zA-Z0-9_-]+)$/);
+        if (request.method === 'DELETE' && deleteMatch) {
+          const fileId = deleteMatch[1];
+          const body = await request.json().catch(() => ({})) as any;
+          const { sessionId, adminToken } = body;
+
+          const id = env.ROOM_DO.idFromName(roomId);
+          const roomDO = env.ROOM_DO.get(id);
+          const delRes = await roomDO.fetch(new Request(`http://do/delete-file/${fileId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId, adminToken })
+          }));
+
+          return new Response(delRes.body, {
+            status: delRes.status,
             headers: corsHeaders
           });
         }

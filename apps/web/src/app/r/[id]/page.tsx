@@ -17,7 +17,7 @@ import { formatBytes } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
 import { API_URL } from '@/lib/config';
 import { QRCodeModal } from '@/components/QRCodeModal';
-import { ChatReference, ReactionSummary } from '@droproom/shared';
+import { ChatReference, ReactionSummary, StorageStats } from '@droproom/shared';
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
@@ -175,8 +175,31 @@ export default function RoomPage({ params }: { params: { id: string } }) {
 
   const {
     status, rejectReason, room, participants, messages, files, joinRequests,
-    isAdmin, sessionId, sendEvent, sendChatMessage, deleteMessage, toggleReaction, approveJoin, rejectJoin, endRoom
+    isAdmin, sessionId, sendEvent, sendChatMessage, deleteMessage, deleteFile, toggleReaction, approveJoin, rejectJoin, endRoom
   } = useRoom(normalizedId, adminToken);
+
+  const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchStorage = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/storage-stats`);
+        if (res.ok && isMounted) {
+          const data = await res.json();
+          setStorageStats(data);
+        }
+      } catch (e) {}
+    };
+    fetchStorage();
+    const interval = setInterval(fetchStorage, 30000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  const isStorageDisabled = storageStats?.state === 'CRITICAL' || storageStats?.state === 'HARD_LIMIT';
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(Date.now()), 10000);
@@ -723,6 +746,20 @@ export default function RoomPage({ params }: { params: { id: string } }) {
           </div>
         </header>
 
+        {/* Admin Storage Safety Indicators */}
+        {isAdmin && storageStats?.state === 'WARNING' && (
+          <div className="px-3 sm:px-6 py-1.5 bg-amber-500/10 border-b border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs flex items-center justify-between shrink-0 animate-settle">
+            <span className="font-mono text-[11px]">Storage advisory: {(storageStats.totalTrackedBytes / (1024*1024*1024)).toFixed(2)} / 8 GiB safety buffer used</span>
+            <span className="text-[10px] text-amber-500/80">Room files active</span>
+          </div>
+        )}
+        {isAdmin && (storageStats?.state === 'CRITICAL' || storageStats?.state === 'HARD_LIMIT') && (
+          <div className="px-3 sm:px-6 py-1.5 bg-rose-500/10 border-b border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs flex items-center justify-between shrink-0 animate-settle">
+            <span className="font-mono text-[11px]">Storage safety ceiling active (8 GiB limit reached)</span>
+            <span className="text-[10px] text-rose-500/80">Uploads paused · Existing downloads active</span>
+          </div>
+        )}
+
         {/* Realtime Host Join Request Modal Popup */}
         {isAdmin && joinRequests.length > 0 && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45 backdrop-blur-xs animate-settle">
@@ -776,6 +813,7 @@ export default function RoomPage({ params }: { params: { id: string } }) {
             externalFiles={droppedFiles}
             onClearExternalFiles={() => setDroppedFiles(null)}
             existingTotalBytes={files.reduce((acc, f) => acc + f.size, 0)}
+            storageDisabled={isStorageDisabled}
           />
 
           {/* Files section */}
@@ -871,6 +909,18 @@ export default function RoomPage({ params }: { params: { id: string } }) {
                             <span>Download ↓</span>
                           )}
                         </button>
+
+                        {/* Delete file button (if uploader or admin) */}
+                        {((file.uploaderId === sessionId) || (isAdmin && (file.uploaderId === 'host' || file.uploaderId === 'admin')) || isAdmin) && (
+                          <button
+                            type="button"
+                            onClick={() => deleteFile(file.id)}
+                            className="h-8.5 w-8.5 rounded-xl bg-[var(--bg)] hover:bg-[var(--danger-bg)] text-[var(--muted)] hover:text-[var(--danger)] border border-[var(--line)] hover:border-[var(--danger-line)] text-xs transition-all shadow-2xs flex items-center justify-center cursor-pointer"
+                            title="Delete file permanently"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
 

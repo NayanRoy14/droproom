@@ -98,7 +98,14 @@ export function useRoom(roomId: string, adminToken?: string, participantId?: str
             }
             break;
           case 'FILE_SHARED':
-            setFiles(f => [data.payload, ...f]);
+            setFiles(f => {
+              const exists = f.find(x => x.id === data.payload.id);
+              if (exists) return f.map(x => x.id === data.payload.id ? data.payload : x);
+              return [data.payload, ...f];
+            });
+            break;
+          case 'FILE_REMOVED':
+            setFiles(f => f.filter(x => x.id !== data.payload.fileId));
             break;
           case 'JOIN_REQUEST_RECEIVED':
             setJoinRequests(r => {
@@ -246,6 +253,10 @@ export function useRoom(roomId: string, adminToken?: string, participantId?: str
     sendEvent({ type: 'REACTION_TOGGLE', payload: { itemId, itemType, emoji } });
   }, [sendEvent]);
 
+  const deleteFile = useCallback((fileId: string) => {
+    sendEvent({ type: 'FILE_DELETE', payload: { fileId } });
+  }, [sendEvent]);
+
   return {
     status,
     rejectReason,
@@ -259,6 +270,7 @@ export function useRoom(roomId: string, adminToken?: string, participantId?: str
     sendEvent,
     sendChatMessage,
     deleteMessage,
+    deleteFile,
     toggleReaction,
     approveJoin,
     rejectJoin,

@@ -1,3 +1,28 @@
+// Authoritative Billing Safety Configuration (R2 Free Tier Protection)
+export const SAFE_STORAGE_LIMIT_BYTES = 8589934592; // 8 GiB safe ceiling (below 10 GB free tier)
+export const MAX_FILE_SIZE_BYTES = 1073741824; // 1 GiB max per file
+export const MAX_ROOM_STORAGE_BYTES = 2684354560; // 2.5 GiB max per room
+export const STORAGE_WARNING_THRESHOLD_BYTES = 7516192768; // 7 GiB warning threshold
+export const STORAGE_CRITICAL_THRESHOLD_BYTES = 8053063680; // 7.5 GiB critical threshold
+export const UPLOAD_RESERVATION_TTL_SECONDS = 900; // 15 minutes
+export const STORAGE_RECONCILIATION_INTERVAL_SECONDS = 3600; // 1 hour
+
+export type StorageHealthState = 'NORMAL' | 'WARNING' | 'CRITICAL' | 'HARD_LIMIT';
+
+export interface StorageStats {
+  actualBytes: number;
+  reservedBytes: number;
+  totalTrackedBytes: number;
+  safeLimitBytes: number;
+  availableBytes: number;
+  warningThresholdBytes: number;
+  criticalThresholdBytes: number;
+  state: StorageHealthState;
+  reconciliationStatus: 'ok' | 'discrepancy' | 'failed' | 'pending';
+  lastReconciledAt: number;
+  discrepancyBytes?: number;
+}
+
 export interface Room {
   id: string;
   name?: string;
@@ -64,6 +89,7 @@ export type ClientEvent =
   | { type: 'CHAT_DELETE'; payload: { messageId: string } }
   | { type: 'REACTION_TOGGLE'; payload: { itemId: string; itemType: 'message' | 'file'; emoji: string } }
   | { type: 'FILE_UPLOAD_COMPLETE'; payload: { fileId: string; originalName: string; size: number; mimeType: string } }
+  | { type: 'FILE_DELETE'; payload: { fileId: string } }
   | { type: 'REMOVE_PARTICIPANT'; payload: { participantId: string } }
   | { type: 'END_ROOM' }
   | { type: 'PING' };

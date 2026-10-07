@@ -26,6 +26,8 @@ interface FileUploadProps {
   externalFiles?: File[] | null;
   onClearExternalFiles?: () => void;
   existingTotalBytes?: number;
+  storageDisabled?: boolean;
+  storageWarning?: string | null;
 }
 
 export function FileUpload({ 
@@ -34,7 +36,9 @@ export function FileUpload({
   onUploadComplete,
   externalFiles,
   onClearExternalFiles,
-  existingTotalBytes = 0
+  existingTotalBytes = 0,
+  storageDisabled = false,
+  storageWarning = null
 }: FileUploadProps) {
   const [queue, setQueue] = useState<UploadQueueItem[]>([]);
   const [dragOver, setDragOver] = useState(false);
@@ -47,7 +51,7 @@ export function FileUpload({
   const startingRef = useRef<Set<string>>(new Set());
 
   const addFilesToQueue = useCallback((files: File[]) => {
-    if (!files.length) return;
+    if (!files.length || storageDisabled) return;
 
     let cumulativeTotal = existingTotalBytes + queueRef.current.reduce((acc, item) => acc + (item.status !== 'error' ? item.size : 0), 0);
 
@@ -78,27 +82,32 @@ export function FileUpload({
     });
 
     setQueue((prev) => [...prev, ...newItems]);
-  }, [existingTotalBytes]);
+  }, [existingTotalBytes, storageDisabled]);
 
   // Process incoming files from external drag-and-drop
   useEffect(() => {
     if (externalFiles && externalFiles.length > 0) {
-      addFilesToQueue(externalFiles);
+      if (!storageDisabled) {
+        addFilesToQueue(externalFiles);
+      }
       onClearExternalFiles?.();
     }
-  }, [externalFiles, onClearExternalFiles, addFilesToQueue]);
+  }, [externalFiles, onClearExternalFiles, addFilesToQueue, storageDisabled]);
 
   const startUpload = useCallback(async (itemId: string, file: File, name: string) => {
     setQueue((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, status: 'uploading' } : item))
     );
 
+    let activeReservationId: string | undefined;
+    let activeFileId: string | undefined;
+
     try {
       const adminToken =
         localStorage.getItem(`dropxyz_admin_${roomId}`) ||
         localStorage.getItem(`droproom_admin_${roomId}`);
 
-      // 1. Authorize & generate presigned URL
+      // 1. Authorize & generate presigned URL (atomic global storage reservation)
       const res = await fetch(`${API_URL}/api/rooms/${roomId}/upload-url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -113,10 +122,15 @@ export function FileUpload({
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => null);
+        if (res.status === 507 || errorData?.code === 'STORAGE_LIMIT_REACHED') {
+          throw new Error('File sharing is temporarily unavailable (storage safety limit reached)');
+        }
         throw new Error(errorData?.error || 'Failed to authorize upload');
       }
 
-      const { uploadUrl, fileId, objectKey } = await res.json();
+      const { uploadUrl, fileId, reservationId, objectKey } = await res.json();
+      activeFileId = fileId;
+      activeReservationId = reservationId;
 
       // 2. Direct PUT upload to Cloudflare R2
       await new Promise<void>((resolve, reject) => {
@@ -151,12 +165,13 @@ export function FileUpload({
         xhr.send(file);
       });
 
-      // 3. Register file completion in DO SQLite
-      await fetch(`${API_URL}/api/rooms/${roomId}/file-complete`, {
+      // 3. Register file completion with authoritative R2 verification
+      const completeRes = await fetch(`${API_URL}/api/rooms/${roomId}/file-complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fileId,
+          reservationId,
           objectKey,
           originalName: name,
           size: file.size,
@@ -167,6 +182,11 @@ export function FileUpload({
         }),
       });
 
+      if (!completeRes.ok) {
+        const errJson = await completeRes.json().catch(() => null);
+        throw new Error(errJson?.error || 'Failed to complete upload verification');
+      }
+
       setQueue((prev) =>
         prev.map((item) =>
           item.id === itemId ? { ...item, status: 'completed', progress: 100, xhr: undefined } : item
@@ -175,6 +195,16 @@ export function FileUpload({
 
       onUploadComplete();
     } catch (e: any) {
+      if (activeFileId || activeReservationId) {
+        try {
+          await fetch(`${API_URL}/api/rooms/${roomId}/upload-cancel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fileId: activeFileId, reservationId: activeReservationId }),
+          });
+        } catch (cancelErr) {}
+      }
+
       if (e.message === 'Upload cancelled') {
         setQueue((prev) => prev.filter((item) => item.id !== itemId));
       } else {
@@ -439,56 +469,72 @@ export function FileUpload({
         </div>
       )}
 
-      {/* Minimal Dropzone */}
-      <div
-        className={`
-          flex flex-col items-center justify-center gap-2.5 w-full py-7 sm:py-8 px-6
-          rounded-2xl border border-dashed transition-all duration-200 select-none
-          ${
-            dragOver
-              ? 'border-[var(--fg)] bg-[var(--hover)]/80 scale-[1.008]'
-              : 'border-[var(--line)] hover:border-[var(--faint)] hover:bg-[var(--surface)]/50'
-          }
-        `}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={handleDrop}
-      >
-        <div 
-          onClick={() => fileInputRef.current?.click()}
-          className="w-10 h-10 rounded-2xl bg-[var(--surface)] border border-[var(--line)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--faint)] hover:scale-105 transition-all shadow-2xs cursor-pointer"
-          title="Browse files to upload"
-        >
-          <Upload className={`w-4 h-4 transition-transform duration-200 ${dragOver ? '-translate-y-0.5 text-[var(--fg)]' : ''}`} />
-        </div>
-
-        <div className="text-center space-y-1">
-          <div className="text-xs sm:text-sm font-medium text-[var(--fg)]">
-            Drop files or folder here, or{' '}
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="underline underline-offset-3 decoration-[var(--line)] hover:decoration-[var(--fg)] transition-colors cursor-pointer"
-            >
-              browse files
-            </button>
-            {' / '}
-            <button
-              type="button"
-              onClick={() => folderInputRef.current?.click()}
-              className="underline underline-offset-3 decoration-[var(--line)] hover:decoration-[var(--fg)] transition-colors cursor-pointer"
-            >
-              folder
-            </button>
+      {/* Minimal Dropzone or Storage Limit Notice */}
+      {storageDisabled ? (
+        <div className="flex flex-col items-center justify-center gap-2.5 w-full py-7 sm:py-8 px-6 rounded-2xl border border-[var(--line)] bg-[var(--surface)]/30 text-center select-none shadow-xs">
+          <div className="w-10 h-10 rounded-2xl bg-[var(--surface)] border border-[var(--line)] flex items-center justify-center text-[var(--muted)]">
+            <Upload className="w-4 h-4 opacity-40" />
           </div>
-          <p className="text-[11px] text-[var(--faint)]">
-            Up to 1 GB per file · 2.5 GB room limit · 2-hour ephemeral lifetime
-          </p>
+          <div className="text-center space-y-1">
+            <p className="text-xs sm:text-sm font-medium text-[var(--muted)]">
+              File sharing is temporarily unavailable
+            </p>
+            <p className="text-[11px] text-[var(--faint)]">
+              Global storage safety limit reached. Existing files remain downloadable.
+            </p>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div
+          className={`
+            flex flex-col items-center justify-center gap-2.5 w-full py-7 sm:py-8 px-6
+            rounded-2xl border border-dashed transition-all duration-200 select-none
+            ${
+              dragOver
+                ? 'border-[var(--fg)] bg-[var(--hover)]/80 scale-[1.008]'
+                : 'border-[var(--line)] hover:border-[var(--faint)] hover:bg-[var(--surface)]/50'
+            }
+          `}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleDrop}
+        >
+          <div 
+            onClick={() => fileInputRef.current?.click()}
+            className="w-10 h-10 rounded-2xl bg-[var(--surface)] border border-[var(--line)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--faint)] hover:scale-105 transition-all shadow-2xs cursor-pointer"
+            title="Browse files to upload"
+          >
+            <Upload className={`w-4 h-4 transition-transform duration-200 ${dragOver ? '-translate-y-0.5 text-[var(--fg)]' : ''}`} />
+          </div>
+
+          <div className="text-center space-y-1">
+            <div className="text-xs sm:text-sm font-medium text-[var(--fg)]">
+              Drop files or folder here, or{' '}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="underline underline-offset-3 decoration-[var(--line)] hover:decoration-[var(--fg)] transition-colors cursor-pointer"
+              >
+                browse files
+              </button>
+              {' / '}
+              <button
+                type="button"
+                onClick={() => folderInputRef.current?.click()}
+                className="underline underline-offset-3 decoration-[var(--line)] hover:decoration-[var(--fg)] transition-colors cursor-pointer"
+              >
+                folder
+              </button>
+            </div>
+            <p className="text-[11px] text-[var(--faint)]">
+              Up to 1 GB per file · 2.5 GB room limit · 2-hour ephemeral lifetime
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

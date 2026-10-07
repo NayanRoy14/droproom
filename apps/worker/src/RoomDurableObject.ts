@@ -1,11 +1,26 @@
 import { DurableObject } from 'cloudflare:workers';
 import { AwsClient } from 'aws4fetch';
 import { Env } from './types';
-import { ClientEvent, ServerEvent, Room, Participant, ChatMessage, FileMetadata, JoinRequest, ReactionSummary } from '@droproom/shared';
+import { 
+  SAFE_STORAGE_LIMIT_BYTES,
+  MAX_FILE_SIZE_BYTES,
+  MAX_ROOM_STORAGE_BYTES,
+  STORAGE_WARNING_THRESHOLD_BYTES,
+  STORAGE_CRITICAL_THRESHOLD_BYTES,
+  UPLOAD_RESERVATION_TTL_SECONDS,
+  STORAGE_RECONCILIATION_INTERVAL_SECONDS,
+  StorageHealthState,
+  StorageStats,
+  ClientEvent, 
+  ServerEvent, 
+  Room, 
+  Participant, 
+  ChatMessage, 
+  FileMetadata, 
+  JoinRequest, 
+  ReactionSummary 
+} from '@droproom/shared';
 
-export const MAX_FILE_SIZE_BYTES = 1024 * 1024 * 1024; // 1 GB per file
-export const MAX_ROOM_STORAGE_BYTES = 2.5 * 1024 * 1024 * 1024; // 2.5 GB max per room
-export const MAX_GLOBAL_STORAGE_BYTES = 8 * 1024 * 1024 * 1024; // 8 GB safe ceiling (below 10 GB free tier)
 export const MAX_ROOM_LIFETIME_MS = 2 * 60 * 60 * 1000; // 2 hours hard cap
 
 export class RoomDurableObject extends DurableObject {
@@ -126,6 +141,171 @@ export class RoomDurableObject extends DurableObject {
     }));
   }
 
+  private initGlobalStorageSchema() {
+    this.ctx.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS global_storage_state (
+        id TEXT PRIMARY KEY,
+        actual_storage_bytes INTEGER NOT NULL DEFAULT 0,
+        reserved_storage_bytes INTEGER NOT NULL DEFAULT 0,
+        last_reconciled_at INTEGER NOT NULL DEFAULT 0,
+        reconciliation_status TEXT NOT NULL DEFAULT 'ok',
+        discrepancy_bytes INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT OR IGNORE INTO global_storage_state (id, actual_storage_bytes, reserved_storage_bytes, last_reconciled_at, reconciliation_status, discrepancy_bytes)
+      VALUES ('current', 0, 0, 0, 'ok', 0);
+
+      CREATE TABLE IF NOT EXISTS storage_reservations (
+        id TEXT PRIMARY KEY,
+        room_id TEXT NOT NULL,
+        file_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        reserved_bytes INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        state TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_reservations_status ON storage_reservations (state, expires_at);
+      CREATE INDEX IF NOT EXISTS idx_reservations_room ON storage_reservations (room_id);
+      CREATE INDEX IF NOT EXISTS idx_reservations_file ON storage_reservations (file_id);
+
+      CREATE TABLE IF NOT EXISTS cleaned_rooms (
+        room_id TEXT PRIMARY KEY,
+        bytes_released INTEGER NOT NULL,
+        cleaned_at INTEGER NOT NULL
+      );
+    `);
+  }
+
+  private pruneExpiredReservations(now = Date.now()) {
+    this.initGlobalStorageSchema();
+    const expiredRows = this.ctx.storage.sql.exec(
+      "SELECT id, reserved_bytes FROM storage_reservations WHERE state = 'pending' AND expires_at <= ?",
+      now
+    ).toArray();
+
+    if (expiredRows.length > 0) {
+      let expiredTotalBytes = 0;
+      for (const row of expiredRows) {
+        expiredTotalBytes += Number(row.reserved_bytes || 0);
+        this.ctx.storage.sql.exec(
+          "UPDATE storage_reservations SET state = 'expired' WHERE id = ?",
+          row.id
+        );
+      }
+
+      if (expiredTotalBytes > 0) {
+        this.ctx.storage.sql.exec(
+          "UPDATE global_storage_state SET reserved_storage_bytes = CASE WHEN reserved_storage_bytes >= ? THEN reserved_storage_bytes - ? ELSE 0 END WHERE id = 'current'",
+          expiredTotalBytes,
+          expiredTotalBytes
+        );
+        console.log(`[STORAGE BILLING SAFETY] Pruned ${expiredRows.length} expired reservations (${expiredTotalBytes} bytes)`);
+      }
+    }
+  }
+
+  private getGlobalStorageStats(): StorageStats {
+    this.pruneExpiredReservations();
+    const row = this.ctx.storage.sql.exec("SELECT * FROM global_storage_state WHERE id = 'current'").toArray()[0];
+    const actualBytes = Math.max(0, Number(row?.actual_storage_bytes || 0));
+    const reservedBytes = Math.max(0, Number(row?.reserved_storage_bytes || 0));
+    const totalTrackedBytes = actualBytes + reservedBytes;
+    const availableBytes = Math.max(0, SAFE_STORAGE_LIMIT_BYTES - totalTrackedBytes);
+
+    let state: StorageHealthState = 'NORMAL';
+    if (totalTrackedBytes >= SAFE_STORAGE_LIMIT_BYTES) {
+      state = 'HARD_LIMIT';
+    } else if (totalTrackedBytes >= STORAGE_CRITICAL_THRESHOLD_BYTES) {
+      state = 'CRITICAL';
+    } else if (totalTrackedBytes >= STORAGE_WARNING_THRESHOLD_BYTES) {
+      state = 'WARNING';
+    }
+
+    return {
+      actualBytes,
+      reservedBytes,
+      totalTrackedBytes,
+      safeLimitBytes: SAFE_STORAGE_LIMIT_BYTES,
+      availableBytes,
+      warningThresholdBytes: STORAGE_WARNING_THRESHOLD_BYTES,
+      criticalThresholdBytes: STORAGE_CRITICAL_THRESHOLD_BYTES,
+      state,
+      reconciliationStatus: (row?.reconciliation_status as any) || 'ok',
+      lastReconciledAt: Number(row?.last_reconciled_at || 0),
+      discrepancyBytes: Number(row?.discrepancy_bytes || 0),
+    };
+  }
+
+  private async reconcileR2Storage(): Promise<{
+    actualR2Bytes: number;
+    objectCount: number;
+    trackedBefore: number;
+    discrepancy: number;
+    status: 'ok' | 'discrepancy' | 'failed';
+  }> {
+    this.initGlobalStorageSchema();
+    const beforeRow = this.ctx.storage.sql.exec("SELECT actual_storage_bytes FROM global_storage_state WHERE id = 'current'").toArray()[0];
+    const trackedBefore = Math.max(0, Number(beforeRow?.actual_storage_bytes || 0));
+
+    try {
+      const aws = new AwsClient({
+        accessKeyId: this.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: this.env.R2_SECRET_ACCESS_KEY,
+        service: 's3',
+        region: 'auto',
+      });
+
+      let continuationToken: string | null = null;
+      let totalBytes = 0;
+      let count = 0;
+      let isTruncated = true;
+
+      while (isTruncated) {
+        const listUrl = new URL(`https://${this.env.R2_BUCKET_NAME}.${this.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com/?list-type=2`);
+        if (continuationToken) {
+          listUrl.searchParams.set('continuation-token', continuationToken);
+        }
+        const listReq = await aws.sign(new Request(listUrl.toString(), { method: 'GET' }));
+        const listRes = await fetch(listReq);
+        if (!listRes.ok) {
+          throw new Error(`R2 list failed with status ${listRes.status}`);
+        }
+        const xml = await listRes.text();
+        const sizeMatches = xml.matchAll(/<Size>(\d+)<\/Size>/g);
+        for (const match of sizeMatches) {
+          totalBytes += parseInt(match[1], 10);
+          count++;
+        }
+
+        const truncatedMatch = xml.match(/<IsTruncated>(true|false)<\/IsTruncated>/i);
+        isTruncated = truncatedMatch ? truncatedMatch[1].toLowerCase() === 'true' : false;
+
+        if (isTruncated) {
+          const nextTokenMatch = xml.match(/<NextContinuationToken>(.*?)<\/NextContinuationToken>/);
+          continuationToken = nextTokenMatch ? nextTokenMatch[1] : null;
+          if (!continuationToken) break;
+        }
+      }
+
+      const discrepancy = totalBytes - trackedBefore;
+      const status: 'ok' | 'discrepancy' = discrepancy === 0 ? 'ok' : 'discrepancy';
+
+      this.ctx.storage.sql.exec(
+        "UPDATE global_storage_state SET actual_storage_bytes = ?, last_reconciled_at = ?, reconciliation_status = ?, discrepancy_bytes = ? WHERE id = 'current'",
+        totalBytes, Date.now(), status, discrepancy
+      );
+
+      console.log(`[R2 RECONCILIATION] Completed: actualR2=${totalBytes}B (${count} objs), trackedBefore=${trackedBefore}B, discrepancy=${discrepancy}B, status=${status}`);
+      return { actualR2Bytes: totalBytes, objectCount: count, trackedBefore, discrepancy, status };
+    } catch (err: any) {
+      console.error('[R2 RECONCILIATION FAILED]', err);
+      this.ctx.storage.sql.exec(
+        "UPDATE global_storage_state SET reconciliation_status = 'failed' WHERE id = 'current'"
+      );
+      return { actualR2Bytes: trackedBefore, objectCount: 0, trackedBefore, discrepancy: 0, status: 'failed' };
+    }
+  }
+
   async fetch(request: Request): Promise<Response> {
     const roomRow = this.ctx.storage.sql.exec('SELECT * FROM room LIMIT 1').toArray()[0];
     if (roomRow) {
@@ -136,57 +316,233 @@ export class RoomDurableObject extends DurableObject {
     const url = new URL(request.url);
 
     if (url.pathname.startsWith('/global-storage/')) {
-      this.ctx.storage.sql.exec(`
-        CREATE TABLE IF NOT EXISTS global_storage (
-          id TEXT PRIMARY KEY,
-          total_bytes INTEGER
-        );
-        INSERT OR IGNORE INTO global_storage (id, total_bytes) VALUES ('current', 0);
-      `);
+      this.initGlobalStorageSchema();
 
+      // 1. Atomic Reservation Check & Hold
       if (url.pathname === '/global-storage/reserve' && request.method === 'POST') {
-        const { size } = (await request.json().catch(() => ({}))) as any;
-        const row = this.ctx.storage.sql.exec("SELECT total_bytes FROM global_storage WHERE id = 'current'").toArray()[0];
-        const currentTotal = ((row?.total_bytes as number) || 0);
-        if (currentTotal + (Number(size) || 0) > MAX_GLOBAL_STORAGE_BYTES) {
+        const body = (await request.json().catch(() => ({}))) as any;
+        const { roomId, fileId, userId, size } = body;
+        const requestedSize = Number(size) || 0;
+
+        if (!requestedSize || requestedSize <= 0) {
+          return new Response(JSON.stringify({ error: 'Invalid file size', code: 'INVALID_SIZE' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        if (requestedSize > MAX_FILE_SIZE_BYTES) {
+          return new Response(JSON.stringify({ error: 'File exceeds 1 GB limit', code: 'FILE_TOO_LARGE' }), {
+            status: 413,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        const stats = this.getGlobalStorageStats();
+
+        // Fail-closed check: if reconciliation failed, block new uploads
+        if (stats.reconciliationStatus === 'failed') {
           return new Response(JSON.stringify({
-            error: 'Free-tier global storage capacity reached (8 GB safe limit across all active rooms). Uploads will resume once active rooms conclude.'
+            error: 'Storage reconciliation check in progress. New uploads are temporarily paused.',
+            code: 'STORAGE_LIMIT_REACHED',
+            state: 'CRITICAL',
+            availableBytes: 0
           }), { status: 507, headers: { 'Content-Type': 'application/json' } });
         }
-        return new Response(JSON.stringify({ ok: true, currentTotal, max: MAX_GLOBAL_STORAGE_BYTES }), {
+
+        // Critical threshold check (>= 7.5 GiB) or Hard limit check (>= 8 GiB)
+        if (stats.state === 'CRITICAL' || stats.state === 'HARD_LIMIT' || requestedSize > stats.availableBytes || (stats.totalTrackedBytes + requestedSize > SAFE_STORAGE_LIMIT_BYTES)) {
+          return new Response(JSON.stringify({
+            error: 'Global storage safety ceiling reached (8 GiB limit). New uploads are paused to protect free-tier allowance.',
+            code: 'STORAGE_LIMIT_REACHED',
+            state: stats.state === 'NORMAL' ? 'CRITICAL' : stats.state,
+            availableBytes: stats.availableBytes,
+            safeLimitBytes: SAFE_STORAGE_LIMIT_BYTES
+          }), { status: 507, headers: { 'Content-Type': 'application/json' } });
+        }
+
+        // ATOMIC RESERVATION in SQLite
+        const reservationId = crypto.randomUUID();
+        const now = Date.now();
+        const expiresAt = now + UPLOAD_RESERVATION_TTL_SECONDS * 1000;
+
+        this.ctx.storage.sql.exec(
+          "INSERT INTO storage_reservations (id, room_id, file_id, user_id, reserved_bytes, created_at, expires_at, state) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')",
+          reservationId, String(roomId || 'unknown'), String(fileId || crypto.randomUUID()), String(userId || 'anonymous'), requestedSize, now, expiresAt
+        );
+
+        this.ctx.storage.sql.exec(
+          "UPDATE global_storage_state SET reserved_storage_bytes = reserved_storage_bytes + ? WHERE id = 'current'",
+          requestedSize
+        );
+
+        const updatedStats = this.getGlobalStorageStats();
+
+        return new Response(JSON.stringify({
+          ok: true,
+          reservationId,
+          reservedBytes: requestedSize,
+          expiresAt,
+          availableBytes: updatedStats.availableBytes,
+          state: updatedStats.state
+        }), { headers: { 'Content-Type': 'application/json' } });
+      }
+
+      // 2. Commit completed upload (converting reservation to actual usage)
+      if (url.pathname === '/global-storage/commit' && request.method === 'POST') {
+        const body = (await request.json().catch(() => ({}))) as any;
+        const { reservationId, fileId, roomId, actualBytes } = body;
+        const verifiedActualBytes = Number(actualBytes) || 0;
+
+        const resRow = this.ctx.storage.sql.exec(
+          "SELECT * FROM storage_reservations WHERE id = ? AND file_id = ? LIMIT 1",
+          reservationId, fileId
+        ).toArray()[0];
+
+        if (!resRow) {
+          return new Response(JSON.stringify({ error: 'Reservation not found', code: 'RESERVATION_NOT_FOUND' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        if (resRow.state !== 'pending') {
+          return new Response(JSON.stringify({ error: `Reservation already ${resRow.state}`, code: 'RESERVATION_ALREADY_RESOLVED' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        const reservedBytes = Number(resRow.reserved_bytes || 0);
+
+        this.ctx.storage.sql.exec(
+          "UPDATE storage_reservations SET state = 'completed' WHERE id = ?",
+          reservationId
+        );
+
+        this.ctx.storage.sql.exec(
+          "UPDATE global_storage_state SET reserved_storage_bytes = CASE WHEN reserved_storage_bytes >= ? THEN reserved_storage_bytes - ? ELSE 0 END, actual_storage_bytes = actual_storage_bytes + ? WHERE id = 'current'",
+          reservedBytes, reservedBytes, verifiedActualBytes
+        );
+
+        return new Response(JSON.stringify({ ok: true, actualBytes: verifiedActualBytes }), {
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      if (url.pathname === '/global-storage/record' && request.method === 'POST') {
-        const { size } = (await request.json().catch(() => ({}))) as any;
-        if (typeof size === 'number' && size > 0) {
-          this.ctx.storage.sql.exec("UPDATE global_storage SET total_bytes = total_bytes + ? WHERE id = 'current'", size);
+      // 3. Release cancelled or failed reservation
+      if (url.pathname === '/global-storage/release-reservation' && request.method === 'POST') {
+        const body = (await request.json().catch(() => ({}))) as any;
+        const { reservationId, fileId } = body;
+
+        const resRow = this.ctx.storage.sql.exec(
+          "SELECT * FROM storage_reservations WHERE (id = ? OR file_id = ?) AND state = 'pending' LIMIT 1",
+          reservationId || '', fileId || ''
+        ).toArray()[0];
+
+        if (resRow) {
+          const reservedBytes = Number(resRow.reserved_bytes || 0);
+          this.ctx.storage.sql.exec("UPDATE storage_reservations SET state = 'released' WHERE id = ?", resRow.id);
+          this.ctx.storage.sql.exec(
+            "UPDATE global_storage_state SET reserved_storage_bytes = CASE WHEN reserved_storage_bytes >= ? THEN reserved_storage_bytes - ? ELSE 0 END WHERE id = 'current'",
+            reservedBytes, reservedBytes
+          );
         }
+
         return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
       }
 
-      if (url.pathname === '/global-storage/release' && request.method === 'POST') {
-        const { size } = (await request.json().catch(() => ({}))) as any;
-        const releaseSize = Number(size) || 0;
-        if (releaseSize > 0) {
+      // 4. Release individual file
+      if (url.pathname === '/global-storage/release-file' && request.method === 'POST') {
+        const body = (await request.json().catch(() => ({}))) as any;
+        const { size } = body;
+        const fileSize = Number(size) || 0;
+        if (fileSize > 0) {
           this.ctx.storage.sql.exec(
-            "UPDATE global_storage SET total_bytes = CASE WHEN total_bytes > ? THEN total_bytes - ? ELSE 0 END WHERE id = 'current'",
-            releaseSize, releaseSize
+            "UPDATE global_storage_state SET actual_storage_bytes = CASE WHEN actual_storage_bytes >= ? THEN actual_storage_bytes - ? ELSE 0 END WHERE id = 'current'",
+            fileSize, fileSize
+          );
+        }
+        return new Response(JSON.stringify({ ok: true, releasedBytes: fileSize }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // 5. Release entire room upon room destruction (Idempotent)
+      if (url.pathname === '/global-storage/release-room' && request.method === 'POST') {
+        const body = (await request.json().catch(() => ({}))) as any;
+        const { roomId, roomFilesBytes } = body;
+        const releaseBytes = Number(roomFilesBytes) || 0;
+
+        const cleanedRow = this.ctx.storage.sql.exec("SELECT * FROM cleaned_rooms WHERE room_id = ? LIMIT 1", roomId).toArray()[0];
+        if (cleanedRow) {
+          return new Response(JSON.stringify({ ok: true, alreadyCleaned: true, bytesReleased: 0 }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        const pendingReservations = this.ctx.storage.sql.exec(
+          "SELECT id, reserved_bytes FROM storage_reservations WHERE room_id = ? AND state = 'pending'",
+          roomId
+        ).toArray();
+
+        let pendingBytesToRelease = 0;
+        for (const p of pendingReservations) {
+          pendingBytesToRelease += Number(p.reserved_bytes || 0);
+          this.ctx.storage.sql.exec("UPDATE storage_reservations SET state = 'released' WHERE id = ?", p.id);
+        }
+
+        this.ctx.storage.sql.exec(
+          "UPDATE global_storage_state SET actual_storage_bytes = CASE WHEN actual_storage_bytes >= ? THEN actual_storage_bytes - ? ELSE 0 END, reserved_storage_bytes = CASE WHEN reserved_storage_bytes >= ? THEN reserved_storage_bytes - ? ELSE 0 END WHERE id = 'current'",
+          releaseBytes, releaseBytes, pendingBytesToRelease, pendingBytesToRelease
+        );
+
+        this.ctx.storage.sql.exec(
+          "INSERT OR REPLACE INTO cleaned_rooms (room_id, bytes_released, cleaned_at) VALUES (?, ?, ?)",
+          roomId, releaseBytes, Date.now()
+        );
+
+        console.log(`[STORAGE BILLING SAFETY] Released room ${roomId}: ${releaseBytes} actual bytes, ${pendingBytesToRelease} reserved bytes`);
+
+        return new Response(JSON.stringify({ ok: true, bytesReleased: releaseBytes, pendingReleased: pendingBytesToRelease }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // 6. Authoritative Storage Stats
+      if (url.pathname === '/global-storage/stats' && request.method === 'GET') {
+        const stats = this.getGlobalStorageStats();
+        return new Response(JSON.stringify(stats), { headers: { 'Content-Type': 'application/json' } });
+      }
+
+      // 7. R2 Reconciliation
+      if (url.pathname === '/global-storage/reconcile' && request.method === 'POST') {
+        const result = await this.reconcileR2Storage();
+        const stats = this.getGlobalStorageStats();
+        return new Response(JSON.stringify({ ok: result.status !== 'failed', result, stats }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // 8. Direct Storage Recording
+      if (url.pathname === '/global-storage/record' && request.method === 'POST') {
+        const body = (await request.json().catch(() => ({}))) as any;
+        const addBytes = Number(body?.size) || 0;
+        if (addBytes > 0) {
+          this.ctx.storage.sql.exec(
+            "UPDATE global_storage_state SET actual_storage_bytes = actual_storage_bytes + ? WHERE id = 'current'",
+            addBytes
           );
         }
         return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
       }
 
-      if (url.pathname === '/global-storage/stats' && request.method === 'GET') {
-        const row = this.ctx.storage.sql.exec("SELECT total_bytes FROM global_storage WHERE id = 'current'").toArray()[0];
-        const currentTotal = ((row?.total_bytes as number) || 0);
-        return new Response(JSON.stringify({
-          totalBytes: currentTotal,
-          maxBytes: MAX_GLOBAL_STORAGE_BYTES,
-          freeTierLimitBytes: 10 * 1024 * 1024 * 1024,
-          availableBytes: Math.max(0, MAX_GLOBAL_STORAGE_BYTES - currentTotal)
-        }), { headers: { 'Content-Type': 'application/json' } });
+      // 9. Reset Global Storage (maintenance/testing)
+      if (url.pathname === '/global-storage/reset' && request.method === 'POST') {
+        this.ctx.storage.sql.exec("UPDATE global_storage_state SET actual_storage_bytes = 0, reserved_storage_bytes = 0, discrepancy_bytes = 0, reconciliation_status = 'ok' WHERE id = 'current'");
+        this.ctx.storage.sql.exec("DELETE FROM storage_reservations");
+        this.ctx.storage.sql.exec("DELETE FROM cleaned_rooms");
+        return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
       }
     }
 
@@ -416,6 +772,64 @@ export class RoomDurableObject extends DurableObject {
         objectKey: fileRow.object_key,
         originalName: fileRow.original_name
       }));
+    }
+
+    if (request.method === 'POST' && url.pathname.startsWith('/delete-file/')) {
+      const fileId = url.pathname.replace('/delete-file/', '');
+      const { sessionId, adminToken } = (await request.json().catch(() => ({}))) as any;
+      
+      const fileRow = this.ctx.storage.sql.exec('SELECT * FROM files WHERE id = ? LIMIT 1', fileId).toArray()[0];
+      if (!fileRow) {
+        return new Response(JSON.stringify({ error: 'File not found' }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      const isUploader = (sessionId && fileRow.uploader_id === sessionId) ||
+                         (adminToken === this.adminToken && (fileRow.uploader_id === 'host' || fileRow.uploader_id === 'admin'));
+      const isAdmin = adminToken === this.adminToken;
+      if (!isUploader && !isAdmin) {
+        return new Response(JSON.stringify({ error: 'Unauthorized to delete this file' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      const objectKey = fileRow.object_key as string;
+      const fileSize = Number(fileRow.size || 0);
+
+      try {
+        const aws = new AwsClient({
+          accessKeyId: this.env.R2_ACCESS_KEY_ID,
+          secretAccessKey: this.env.R2_SECRET_ACCESS_KEY,
+          service: 's3',
+          region: 'auto',
+        });
+        const r2Url = new URL(`https://${this.env.R2_BUCKET_NAME}.${this.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com/${objectKey}`);
+        const delReq = await aws.sign(new Request(r2Url.toString(), { method: 'DELETE' }));
+        await fetch(delReq);
+      } catch (e) {
+        console.error('Failed to delete file from R2:', e);
+      }
+
+      this.ctx.storage.sql.exec('DELETE FROM files WHERE id = ?', fileId);
+      this.ctx.storage.sql.exec('DELETE FROM reactions WHERE item_id = ?', fileId);
+
+      try {
+        const globalId = this.env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
+        const globalDO = this.env.ROOM_DO.get(globalId);
+        this.ctx.waitUntil(globalDO.fetch(new Request('http://do/global-storage/release-file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ size: fileSize })
+        })));
+      } catch (e) {}
+
+      this.broadcast({ type: 'FILE_REMOVED', payload: { fileId } });
+      return new Response(JSON.stringify({ ok: true, fileId }), {
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
 
 
@@ -660,6 +1074,55 @@ export class RoomDurableObject extends DurableObject {
           break;
         }
 
+        case 'FILE_DELETE': {
+          if (!session.participantId && !session.isAdmin) return;
+          const { fileId } = (event as any).payload || {};
+          if (!fileId || typeof fileId !== 'string') return;
+
+          const fileRow = this.ctx.storage.sql.exec('SELECT * FROM files WHERE id = ? LIMIT 1', fileId).toArray()[0];
+          if (!fileRow) return;
+
+          const isUploader = (session.participantId && fileRow.uploader_id === session.participantId) ||
+                             (session.isAdmin && (fileRow.uploader_id === 'host' || fileRow.uploader_id === 'admin'));
+          if (!isUploader && !session.isAdmin) {
+            this.send(ws, { type: 'ERROR', payload: { message: 'You can only delete files you uploaded.' } });
+            return;
+          }
+
+          const objectKey = fileRow.object_key as string;
+          const fileSize = Number(fileRow.size || 0);
+
+          try {
+            const aws = new AwsClient({
+              accessKeyId: this.env.R2_ACCESS_KEY_ID,
+              secretAccessKey: this.env.R2_SECRET_ACCESS_KEY,
+              service: 's3',
+              region: 'auto',
+            });
+            const r2Url = new URL(`https://${this.env.R2_BUCKET_NAME}.${this.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com/${objectKey}`);
+            const delReq = await aws.sign(new Request(r2Url.toString(), { method: 'DELETE' }));
+            await fetch(delReq);
+          } catch (e) {
+            console.error('Failed to delete file from R2:', e);
+          }
+
+          this.ctx.storage.sql.exec('DELETE FROM files WHERE id = ?', fileId);
+          this.ctx.storage.sql.exec('DELETE FROM reactions WHERE item_id = ?', fileId);
+
+          try {
+            const globalId = this.env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
+            const globalDO = this.env.ROOM_DO.get(globalId);
+            this.ctx.waitUntil(globalDO.fetch(new Request('http://do/global-storage/release-file', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ size: fileSize })
+            })));
+          } catch (e) {}
+
+          this.broadcast({ type: 'FILE_REMOVED', payload: { fileId } });
+          break;
+        }
+
         case 'REACTION_TOGGLE': {
           if (!session.participantId && !session.isAdmin) return;
           const { itemId, itemType, emoji } = (event as any).payload || {};
@@ -766,6 +1229,16 @@ export class RoomDurableObject extends DurableObject {
   }
 
   async alarm() {
+    if (this.roomId === '__GLOBAL_STORAGE__') {
+      this.pruneExpiredReservations();
+      const stats = this.getGlobalStorageStats();
+      if (Date.now() - stats.lastReconciledAt >= STORAGE_RECONCILIATION_INTERVAL_SECONDS * 1000) {
+        await this.reconcileR2Storage();
+      }
+      this.ctx.storage.setAlarm(Date.now() + 10 * 60 * 1000);
+      return;
+    }
+
     this.ensureRoomLoaded();
     const roomRow = this.ctx.storage.sql.exec('SELECT * FROM room LIMIT 1').toArray()[0];
     if (!roomRow) {
@@ -803,14 +1276,14 @@ export class RoomDurableObject extends DurableObject {
     const sizeRow = this.ctx.storage.sql.exec('SELECT COALESCE(SUM(size), 0) as total FROM files').toArray()[0];
     const totalBytes = Number(sizeRow?.total || 0);
 
-    if (totalBytes > 0 && this.roomId !== '__GLOBAL_STORAGE__') {
+    if (this.roomId !== '__GLOBAL_STORAGE__') {
       try {
         const globalId = this.env.ROOM_DO.idFromName('__GLOBAL_STORAGE__');
         const globalDO = this.env.ROOM_DO.get(globalId);
-        await globalDO.fetch(new Request('http://do/global-storage/release', {
+        await globalDO.fetch(new Request('http://do/global-storage/release-room', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ size: totalBytes })
+          body: JSON.stringify({ roomId: this.roomId, roomFilesBytes: totalBytes })
         }));
       } catch (e) {
         console.error('Failed to release global storage in destroyRoom:', e);
